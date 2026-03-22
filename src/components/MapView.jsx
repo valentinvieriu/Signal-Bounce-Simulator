@@ -37,6 +37,22 @@ function getWallSegments({ mapX, mapY, mapW, mapH }) {
   ];
 }
 
+function getInteriorPoints(result) {
+  if (!result.didExit || result.points.length < 2) {
+    return result.points;
+  }
+
+  return result.points.slice(0, -1);
+}
+
+function getExteriorPoints(result) {
+  if (!result.didExit || result.points.length < 2) {
+    return [];
+  }
+
+  return result.points.slice(-2);
+}
+
 const MotionCircle = motion.circle;
 
 export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode }) {
@@ -105,10 +121,20 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
 
-  const createPath = (result) => result.points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ");
+  const createPathFromPoints = (points) => points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ");
+  const createPath = (result, segment = "full") => {
+    const points =
+      segment === "interior"
+        ? getInteriorPoints(result)
+        : segment === "exterior"
+          ? getExteriorPoints(result)
+          : result.points;
+
+    return points.length >= 2 ? createPathFromPoints(points) : "";
+  };
   const createConePath = () => {
-    const leftPath = left.points.map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
-    const rightPath = [...right.points].reverse().map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
+    const leftPath = getInteriorPoints(left).map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
+    const rightPath = [...getInteriorPoints(right)].reverse().map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
 
     return `M ${leftPath.join(" L ")} L ${rightPath.join(" L ")} Z`;
   };
@@ -217,22 +243,34 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               strokeDasharray="8 8"
               opacity="0.65"
             />
-            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.4 + alignment.approachScore * 0.35} />
-            <path d={createPath(left)} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
-            <path d={createPath(right)} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
+            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.18 + alignment.approachScore * 0.18} />
+            <path d={createPath(left, "interior")} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
+            <path d={createPath(right, "interior")} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
             {guide.map((result, index) => (
               <path
                 key={`guide-${index}`}
-                d={createPath(result)}
+                d={createPath(result, "interior")}
                 fill="none"
                 stroke={alignmentPalette.guide}
-                strokeWidth={1.4 + alignment.score}
+                strokeWidth={1.1 + alignment.score * 0.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity={0.3 + alignment.score * 0.4}
+                opacity={0.16 + alignment.score * 0.2}
               />
             ))}
-            <path d={createPath(main)} fill="none" stroke={alignmentPalette.main} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+            <path d={createPath(main, "interior")} fill="none" stroke={alignmentPalette.main} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+            {main.didExit && (
+              <path
+                d={createPath(main, "exterior")}
+                fill="none"
+                stroke={alignmentPalette.main}
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.38"
+                strokeDasharray="8 8"
+              />
+            )}
 
             {wallSegments.map((wall) => (
               <g key={wall.key}>
