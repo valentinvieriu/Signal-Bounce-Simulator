@@ -343,6 +343,23 @@ describe("getAlignmentProfile", () => {
     expect(profile.approachScore).toBeGreaterThan(0);
   });
 
+  it("keeps the same scoring and guide layout from either side of approach", () => {
+    const leftApproach = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: -18,
+    });
+    const rightApproach = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: 18,
+    });
+
+    expect(leftApproach.state).toBe(rightApproach.state);
+    expect(leftApproach.score).toBeCloseTo(rightApproach.score);
+    expect(leftApproach.visualGuideOffsets).toEqual(rightApproach.visualGuideOffsets);
+  });
+
   it("falls back to missed when well outside the cone", () => {
     const profile = getAlignmentProfile({
       beamSpread: 60,

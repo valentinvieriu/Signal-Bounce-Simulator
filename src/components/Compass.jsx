@@ -81,9 +81,11 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const sweepStart = getArcPoint(radius, sweepRadius, targetSweepStart);
   const sweepEnd = getArcPoint(radius, sweepRadius, targetSweepStart + sweep);
   const targetLocalBearing = norm360(targetBearing - forwardBearing);
+  const sweepAnchor = getArcPoint(radius, sweepRadius, targetLocalBearing);
   const featherArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.featherThreshold, targetLocalBearing + alignment.featherThreshold);
   const coneArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.halfSpread, targetLocalBearing + alignment.halfSpread);
   const lockArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.lockThreshold, targetLocalBearing + alignment.lockThreshold);
+  const useLockPulse = alignmentError !== null && alignmentError < Math.max(0.75, alignment.lockThreshold * 0.35);
   const alignmentPalette =
     alignment.state === "locked"
       ? { stroke: "#16a34a", glow: "rgba(22,163,74,0.18)", badge: "bg-emerald-100 text-emerald-800", panel: "border-emerald-200 bg-emerald-50", text: "text-emerald-900", subtext: "text-emerald-700" }
@@ -161,13 +163,6 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
             }}
             onLostPointerCapture={() => setDrag(null)}
           >
-            <defs>
-              <linearGradient id="alignment-sweep" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#bf8d8c" stopOpacity="0.55" />
-                <stop offset={`${Math.round(alignment.approachScore * 55 + 20)}%`} stopColor={alignmentPalette.stroke} stopOpacity="0.92" />
-                <stop offset="100%" stopColor={alignmentPalette.stroke} stopOpacity="0.96" />
-              </linearGradient>
-            </defs>
             <g>
               {Array.from({ length: 36 }, (_, index) => index * 10).map((step) => {
                 const angle = degToRad(step - 90 - forwardBearing);
@@ -254,15 +249,45 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               strokeLinecap="round"
               pointerEvents="none"
             />
-            <path
-              d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${Math.abs(sweep) > 180 ? 1 : 0} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
-              fill="none"
-              stroke="url(#alignment-sweep)"
-              strokeWidth={8 + alignment.score * 4}
-              strokeLinecap="round"
-              opacity={alignment.state === "missed" ? 0.65 : 1}
-              pointerEvents="none"
-            />
+            {useLockPulse ? (
+              <>
+                <circle
+                  cx={sweepAnchor.x}
+                  cy={sweepAnchor.y}
+                  r={10 + alignment.score * 2}
+                  fill={alignmentPalette.glow}
+                  pointerEvents="none"
+                />
+                <circle
+                  cx={sweepAnchor.x}
+                  cy={sweepAnchor.y}
+                  r={4 + alignment.score * 1.5}
+                  fill={alignmentPalette.stroke}
+                  pointerEvents="none"
+                />
+              </>
+            ) : (
+              <>
+                <path
+                  d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${Math.abs(sweep) > 180 ? 1 : 0} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
+                  fill="none"
+                  stroke={alignmentPalette.glow}
+                  strokeWidth={14 + alignment.score * 5}
+                  strokeLinecap="round"
+                  opacity={0.8}
+                  pointerEvents="none"
+                />
+                <path
+                  d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${Math.abs(sweep) > 180 ? 1 : 0} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
+                  fill="none"
+                  stroke={alignmentPalette.stroke}
+                  strokeWidth={7 + alignment.score * 3}
+                  strokeLinecap="round"
+                  opacity={alignment.state === "missed" ? 0.7 : 1}
+                  pointerEvents="none"
+                />
+              </>
+            )}
 
             {draggableHandles.map((handle) => (
               <g key={handle.id}>

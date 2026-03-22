@@ -165,13 +165,18 @@ export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
   const score = clamp(coneScore * 0.75 + approachScore * 0.25, 0, 1);
   const focusSpread = Math.max(lockThreshold, halfSpread * (0.92 - score * 0.56));
   const guideRayCount = score >= 0.92 ? 4 : score >= 0.7 ? 3 : score >= 0.4 ? 2 : score > 0.12 ? 1 : 0;
+  const guideRayPattern =
+    guideRayCount === 1
+      ? [-0.35, 0.35]
+      : guideRayCount === 2
+        ? [-0.55, 0.55]
+        : guideRayCount === 3
+          ? [-0.75, 0, 0.75]
+          : [-0.85, -0.35, 0.35, 0.85];
   const visualGuideOffsets =
     guideRayCount === 0
       ? []
-      : Array.from({ length: guideRayCount }, (_, index) => {
-          const position = guideRayCount === 1 ? 0.5 : index / (guideRayCount - 1);
-          return (position - 0.5) * 2 * focusSpread;
-        }).filter((offsetDeg) => Math.abs(offsetDeg) > 0.01);
+      : guideRayPattern.map((position) => position * focusSpread);
 
   let state = "missed";
   let label = "Outside cone";
