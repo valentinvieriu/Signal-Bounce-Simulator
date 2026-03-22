@@ -183,25 +183,22 @@ export default function App() {
   }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
 
   const updateNode = useCallback((nodeId, updates) => {
-    setImportedNodes((currentNodes) => {
-      const nextNodes = currentNodes.map((node) => (node.id === nodeId ? { ...node, ...updates } : node));
-      const nextActiveNode = nextNodes.find((node) => node.id === activeNodeId) ?? null;
-      syncSimulationToNode(nextActiveNode, referenceLocation);
-      return nextNodes;
-    });
-  }, [activeNodeId, referenceLocation, syncSimulationToNode]);
+    const nextNodes = importedNodes.map((node) => (node.id === nodeId ? { ...node, ...updates } : node));
+    const nextActiveNode = nextNodes.find((node) => node.id === activeNodeId) ?? null;
+    setImportedNodes(nextNodes);
+    syncSimulationToNode(nextActiveNode, referenceLocation);
+  }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
 
   const removeNode = useCallback((nodeId) => {
-    setImportedNodes((currentNodes) => {
-      const nextNodes = currentNodes.filter((node) => node.id !== nodeId);
-      const nextActiveNode = activeNodeId === nodeId
-        ? (nextNodes[0] ?? null)
-        : (nextNodes.find((node) => node.id === activeNodeId) ?? null);
-      setActiveNodeId(nextActiveNode?.id ?? null);
-      syncSimulationToNode(nextActiveNode, referenceLocation);
-      return nextNodes;
-    });
-  }, [activeNodeId, referenceLocation, syncSimulationToNode]);
+    const nextNodes = importedNodes.filter((node) => node.id !== nodeId);
+    const nextActiveNode = activeNodeId === nodeId
+      ? (nextNodes[0] ?? null)
+      : (nextNodes.find((node) => node.id === activeNodeId) ?? null);
+
+    setImportedNodes(nextNodes);
+    setActiveNodeId(nextActiveNode?.id ?? null);
+    syncSimulationToNode(nextActiveNode, referenceLocation);
+  }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
 
   const updateReferenceLocation = useCallback((location, sourceMessage) => {
     const normalized = normalizeGeoLocation(location);

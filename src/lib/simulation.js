@@ -123,8 +123,18 @@ function splitCsvRow(row) {
 }
 
 function parseNumericCell(value) {
-  const normalized = value.replace(/[^0-9+-.]/g, "");
-  const parsed = Number(normalized);
+  const trimmed = value.trim();
+  const directParse = Number(trimmed);
+  if (Number.isFinite(directParse)) {
+    return directParse;
+  }
+
+  const match = trimmed.match(/[-+]?\d*\.?\d+/);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number(match[0]);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -145,7 +155,11 @@ function buildImportedNode(row, rowIndex) {
   const latitude = parseNumericCell(row.Latitude ?? "");
   const longitude = parseNumericCell(row.Longitude ?? "");
 
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  if (
+    !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+    latitude < -90 || latitude > 90 ||
+    longitude < -180 || longitude > 180
+  ) {
     return null;
   }
 
@@ -214,7 +228,11 @@ export function normalizeGeoLocation(location) {
   const latitude = Number(location.latitude);
   const longitude = Number(location.longitude);
 
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  if (
+    !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+    latitude < -90 || latitude > 90 ||
+    longitude < -180 || longitude > 180
+  ) {
     return null;
   }
 

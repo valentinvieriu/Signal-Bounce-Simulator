@@ -402,7 +402,6 @@ describe("getAlignmentProfile", () => {
   });
 });
 
-
 describe("node log import", () => {
   it("extracts node rows from pasted log blocks and repeated headers", () => {
     const nodes = extractNodeLogs(`SeqNo, Latitude, Longitude, Altitude, Sats, Speed, Heading, SNR, Timestamp
@@ -445,6 +444,11 @@ SeqNo, Latitude, Longitude, Altitude, Sats, Speed, Heading, SNR, Timestamp
       source: "manual",
       label: "Reference location",
     });
+  });
+
+  it("rejects latitude and longitude outside valid ranges", () => {
+    expect(normalizeGeoLocation({ latitude: 91, longitude: 11 })).toBeNull();
+    expect(normalizeGeoLocation({ latitude: 48, longitude: 181 })).toBeNull();
   });
 
   it("computes a bearing and distance between reference and node positions", () => {

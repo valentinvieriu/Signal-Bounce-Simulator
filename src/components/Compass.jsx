@@ -42,6 +42,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const [drag, setDrag] = useState(null); // { mode, pointerId }
   const gyroControlsNorth = useCompass && gyroMode === "north";
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
+  const distanceSliderMax = Math.max(20, Math.ceil(distanceKm));
 
   const pointToAngle = (clientX, clientY) => {
     const rect = dialRef.current?.getBoundingClientRect();
@@ -382,7 +383,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               value={distanceKm}
               onChange={(value) => updateSim("distanceKm", value)}
               min={0}
-              max={20}
+              max={distanceSliderMax}
               step={0.01}
               unit="km"
             />

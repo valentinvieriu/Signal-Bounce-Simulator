@@ -1,10 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Crosshair, MapPinned, Upload } from "lucide-react";
 
-import { getGeoMetrics } from "../lib/simulation";
 import { Button, InfoCard, NumberField } from "./ui";
 
-function NodeCard({ node, isActive, onSelect, onUpdate, onRemove, metrics }) {
+function NodeCard({ node, isActive, onSelect, onUpdate, onRemove, metrics, hasReferenceLocation }) {
   return (
     <div className={`rounded-2xl border p-3 shadow-sm transition-colors ${isActive ? "border-sky-200 bg-sky-50" : "border-zinc-100 bg-white"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -44,7 +43,7 @@ function NodeCard({ node, isActive, onSelect, onUpdate, onRemove, metrics }) {
         <div className="rounded-xl bg-zinc-50 px-3 py-2">SNR: {node.snr ?? "—"} dB</div>
         <div className="rounded-xl bg-zinc-50 px-3 py-2">Sats: {node.sats ?? "—"}</div>
         <div className="rounded-xl bg-zinc-50 px-3 py-2">
-          {metrics ? `${metrics.distanceKm.toFixed(3)} km · ${metrics.bearing.toFixed(1)}°` : "Waiting for reference location"}
+          {metrics ? `${metrics.distanceKm.toFixed(3)} km · ${metrics.bearing.toFixed(1)}°` : hasReferenceLocation ? "Select this node to solve" : "Waiting for reference location"}
         </div>
       </div>
     </div>
@@ -67,17 +66,10 @@ export default function NodeImportPanel({
   const fileInputRef = useRef(null);
   const [logText, setLogText] = useState("");
   const [importStatus, setImportStatus] = useState("Import CSV-style logs or paste them below to create editable node entries.");
-  const [manualLocation, setManualLocation] = useState({ latitude: "", longitude: "" });
-
-  const displayedManualLocation = {
-    latitude: manualLocation.latitude === "" ? (referenceLocation?.latitude ?? "") : manualLocation.latitude,
-    longitude: manualLocation.longitude === "" ? (referenceLocation?.longitude ?? "") : manualLocation.longitude,
-  };
-
-  const nodeMetricsMap = useMemo(
-    () => Object.fromEntries(importedNodes.map((node) => [node.id, getGeoMetrics(referenceLocation, node)])),
-    [importedNodes, referenceLocation],
-  );
+  const [manualLocation, setManualLocation] = useState(() => ({
+    latitude: referenceLocation?.latitude ?? "",
+    longitude: referenceLocation?.longitude ?? "",
+  }));
 
   const handleLogImport = (inputText) => {
     const result = onImportText(inputText);
@@ -151,13 +143,13 @@ export default function NodeImportPanel({
           <div className="grid gap-3 sm:grid-cols-2">
             <NumberField
               label="Latitude"
-              value={displayedManualLocation.latitude}
+              value={manualLocation.latitude}
               step={0.000001}
               onChange={(event) => setManualLocation((current) => ({ ...current, latitude: event.target.value }))}
             />
             <NumberField
               label="Longitude"
-              value={displayedManualLocation.longitude}
+              value={manualLocation.longitude}
               step={0.000001}
               onChange={(event) => setManualLocation((current) => ({ ...current, longitude: event.target.value }))}
             />
@@ -165,8 +157,8 @@ export default function NodeImportPanel({
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => onUpdateReferenceLocation({
-                latitude: Number(displayedManualLocation.latitude),
-                longitude: Number(displayedManualLocation.longitude),
+                latitude: Number(manualLocation.latitude),
+                longitude: Number(manualLocation.longitude),
                 source: "manual",
                 label: "Manual location",
               }, "Manual reference location saved.")}
@@ -174,9 +166,17 @@ export default function NodeImportPanel({
               Save manual location
             </Button>
             {referenceLocation && (
-              <div className="rounded-2xl bg-white px-4 py-2 text-xs text-zinc-600 shadow-sm">
-                {referenceLocation.latitude}, {referenceLocation.longitude}
-              </div>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => setManualLocation({ latitude: referenceLocation.latitude, longitude: referenceLocation.longitude })}
+                >
+                  Copy current reference
+                </Button>
+                <div className="rounded-2xl bg-white px-4 py-2 text-xs text-zinc-600 shadow-sm">
+                  {referenceLocation.latitude}, {referenceLocation.longitude}
+                </div>
+              </>
             )}
           </div>
           <InfoCard icon={MapPinned}>{locationStatus}</InfoCard>
@@ -197,7 +197,8 @@ export default function NodeImportPanel({
                   onSelect={() => onSelectNode(node.id)}
                   onUpdate={(updates) => onUpdateNode(node.id, updates)}
                   onRemove={() => onRemoveNode(node.id)}
-                  metrics={nodeMetricsMap[node.id]}
+                  metrics={node.id === activeNodeId ? activeNodeMetrics : null}
+                  hasReferenceLocation={Boolean(referenceLocation)}
                 />
               ))}
             </div>
