@@ -9,7 +9,11 @@ Built with React, Vite, Tailwind CSS, and Framer Motion.
 - **Compass view** - set true north, target bearing, and antenna direction by dragging handles or using device compass
 - **Courtyard map** - 2D top-down ray tracer with configurable building dimensions, antenna position, beam spread, and wall bounce limit
 - **Wall materials** - toggle each wall between reflect and pass-through
-- **Live feedback** - exit bearing, alignment error, path length, and reflection count update in real time
+- **Live feedback** - exit bearing, graded alignment potential, path length, and reflection count update in real time
+
+## Alignment model
+
+The simulator now treats alignment as a progressive capture problem rather than a strict binary check. The current proposal and implementation notes live in [`docs/alignment-proposal.md`](docs/alignment-proposal.md).
 
 ## Getting started
 

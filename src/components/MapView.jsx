@@ -100,12 +100,26 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gridStep = dominantDimension > 200 ? 25 : dominantDimension > 100 ? 10 : dominantDimension > 40 ? 5 : dominantDimension > 10 ? 2 : 1;
   const gridPx = (mapW / widthUnits) * gridStep;
 
-  const { escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
-  const { main, left, right } = rays;
+  const { alignment, escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
+  const { main, left, right, guide } = rays;
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
 
   const createPath = (result) => result.points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ");
+  const createConePath = () => {
+    const leftPath = left.points.map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
+    const rightPath = [...right.points].reverse().map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
+
+    return `M ${leftPath.join(" L ")} L ${rightPath.join(" L ")} Z`;
+  };
+  const alignmentPalette =
+    alignment.state === "locked"
+      ? { main: "#16a34a", edge: "#86efac", fill: "rgba(22,163,74,0.14)", guide: "rgba(22,163,74,0.36)", badge: "border-transparent bg-emerald-100 text-emerald-800" }
+      : alignment.state === "converging"
+        ? { main: "#0891b2", edge: "#67e8f9", fill: "rgba(8,145,178,0.12)", guide: "rgba(8,145,178,0.3)", badge: "border-transparent bg-cyan-100 text-cyan-800" }
+        : alignment.state === "fringe"
+          ? { main: "#d97706", edge: "#fdba74", fill: "rgba(217,119,6,0.11)", guide: "rgba(217,119,6,0.24)", badge: "border-transparent bg-amber-100 text-amber-800" }
+          : { main: "#2563eb", edge: "#93c5fd", fill: "rgba(37,99,235,0.08)", guide: "rgba(37,99,235,0.18)", badge: "border-transparent bg-zinc-100 text-zinc-700" };
 
   const summaryCards = [
     { label: "Building size", value: `${widthUnits.toFixed(1)} m × ${depthUnits.toFixed(1)} m` },
@@ -114,6 +128,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
     { label: "Path length", value: `${(main.pathDistanceUnits / 1000).toFixed(2)} km` },
     { label: "Reflections", value: String(main.reflectionsUsed) },
     { label: "Alignment error", value: alignmentError !== null ? `${alignmentError.toFixed(1)}°` : "—" },
+    { label: "Alignment potential", value: `${Math.round(alignment.score * 100)}%`, accent: alignment.score >= 0.7 },
   ];
 
   return (
@@ -125,9 +140,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
             <p className="mt-1 text-sm font-normal text-zinc-500">Drag to move or rotate antenna. Choose pass/reflect for walls.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={isAligned ? "border-transparent bg-emerald-100 text-emerald-800" : "border-transparent bg-zinc-100 text-zinc-700"}>
-              {isAligned ? "Bearing matched" : main.didExit ? "Exited but off target" : "No exit"}
-            </Badge>
+            <Badge className={alignmentPalette.badge}>{main.didExit ? alignment.label : "No exit"}</Badge>
             <Badge className="border-transparent bg-zinc-100 text-zinc-700">{main.didExit ? `Exit ${main.finalTrueBearing.toFixed(1)}°` : "Contained"}</Badge>
           </div>
         </div>
@@ -204,9 +217,22 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               strokeDasharray="8 8"
               opacity="0.65"
             />
-            <path d={createPath(left)} fill="none" stroke={isAligned ? "#86efac" : "#93c5fd"} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-            <path d={createPath(right)} fill="none" stroke={isAligned ? "#86efac" : "#93c5fd"} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-            <path d={createPath(main)} fill="none" stroke={isAligned ? "#16a34a" : "#2563eb"} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.4 + alignment.approachScore * 0.35} />
+            <path d={createPath(left)} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
+            <path d={createPath(right)} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
+            {guide.map((result, index) => (
+              <path
+                key={`guide-${index}`}
+                d={createPath(result)}
+                fill="none"
+                stroke={alignmentPalette.guide}
+                strokeWidth={1.4 + alignment.score}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.3 + alignment.score * 0.4}
+              />
+            ))}
+            <path d={createPath(main)} fill="none" stroke={alignmentPalette.main} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
 
             {wallSegments.map((wall) => (
               <g key={wall.key}>
@@ -332,6 +358,9 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
             {summaryCards.map((card) => (
               <StatCard key={card.label} label={card.label} value={card.value} accent={card.accent} />
             ))}
+            <InfoCard icon={Waves} iconClassName="text-blue-500">
+              Target lock now uses three zones: a green lock core, the main cone body, and a feathered entry band that starts reacting before full alignment.
+            </InfoCard>
             {MAP_TIPS.map((tip) => (
               <InfoCard key={tip.label} icon={tip.icon === "move" ? Move : Waves} iconClassName={tip.tone}>
                 {tip.text}

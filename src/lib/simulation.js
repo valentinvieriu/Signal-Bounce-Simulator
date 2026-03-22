@@ -4,6 +4,14 @@ export const radToDeg = (radians) => (radians * 180) / Math.PI;
 export const norm360 = (degrees) => ((degrees % 360) + 360) % 360;
 export const shortestDelta = (from, to) => ((norm360(to) - norm360(from) + 540) % 360) - 180;
 export const distance = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+export const smoothstep = (edge0, edge1, value) => {
+  if (edge0 === edge1) {
+    return value >= edge1 ? 1 : 0;
+  }
+
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
 export const DEFAULTS = {
   gyroMode: "north",
@@ -106,15 +114,93 @@ export function getSimulationTelemetry(sim) {
   const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
   const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
   const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
-  const alignmentError = main.didExit ? Math.abs(shortestDelta(main.finalTrueBearing, targetBearing)) : null;
-  const isAligned = main.didExit && alignmentError !== null && alignmentError <= 2;
+  const signedAlignmentError = main.didExit ? shortestDelta(main.finalTrueBearing, targetBearing) : null;
+  const alignmentError = signedAlignmentError === null ? null : Math.abs(signedAlignmentError);
+  const alignment = getAlignmentProfile({
+    beamSpread,
+    didExit: main.didExit,
+    signedError: signedAlignmentError,
+  });
+  const guideRays = alignment.visualGuideOffsets.map((offsetDeg) => (
+    traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + offsetDeg })
+  ));
 
   return {
     escapeDistance,
     localAntennaDirection,
-    rays: { main, left, right },
+    rays: { main, left, right, guide: guideRays },
     alignmentError,
-    isAligned,
+    alignment,
+    isAligned: alignment.state === "locked",
+  };
+}
+
+export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
+  const halfSpread = Math.max(beamSpread / 2, 1);
+  const lockThreshold = Math.max(2, Math.min(8, halfSpread * 0.18));
+  const featherThreshold = halfSpread + Math.max(4, halfSpread * 0.35);
+
+  if (!didExit || signedError === null || !Number.isFinite(signedError)) {
+    return {
+      state: "blocked",
+      label: "No exit",
+      score: 0,
+      coneScore: 0,
+      approachScore: 0,
+      centerBias: 0,
+      halfSpread,
+      lockThreshold,
+      featherThreshold,
+      signedError: null,
+      error: null,
+      visualGuideOffsets: [],
+      focusSpread: halfSpread,
+    };
+  }
+
+  const error = Math.abs(signedError);
+  const coneScore = 1 - smoothstep(lockThreshold, halfSpread, error);
+  const approachScore = 1 - smoothstep(halfSpread, featherThreshold, error);
+  const centerBias = 1 - smoothstep(0, lockThreshold, error);
+  const score = clamp(coneScore * 0.75 + approachScore * 0.25, 0, 1);
+  const focusSpread = Math.max(lockThreshold, halfSpread * (0.92 - score * 0.56));
+  const guideRayCount = score >= 0.92 ? 4 : score >= 0.7 ? 3 : score >= 0.4 ? 2 : score > 0.12 ? 1 : 0;
+  const visualGuideOffsets =
+    guideRayCount === 0
+      ? []
+      : Array.from({ length: guideRayCount }, (_, index) => {
+          const position = guideRayCount === 1 ? 0.5 : index / (guideRayCount - 1);
+          return (position - 0.5) * 2 * focusSpread;
+        }).filter((offsetDeg) => Math.abs(offsetDeg) > 0.01);
+
+  let state = "missed";
+  let label = "Outside cone";
+
+  if (error <= lockThreshold) {
+    state = "locked";
+    label = "Locked";
+  } else if (error <= halfSpread) {
+    state = "converging";
+    label = "Inside cone";
+  } else if (error <= featherThreshold) {
+    state = "fringe";
+    label = "Entering cone";
+  }
+
+  return {
+    state,
+    label,
+    score,
+    coneScore,
+    approachScore,
+    centerBias,
+    halfSpread,
+    lockThreshold,
+    featherThreshold,
+    signedError,
+    error,
+    visualGuideOffsets,
+    focusSpread,
   };
 }
 
