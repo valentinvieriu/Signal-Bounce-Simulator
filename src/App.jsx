@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
-import { clamp, createDefaultSimulationState, getResetMapState, norm360 } from "./lib/simulation";
+import {
+  clamp,
+  createDefaultSimulationState,
+  getResetMapState,
+  getSimulationTelemetry,
+  norm360,
+} from "./lib/simulation";
 
 function useDeviceHeading(enabled) {
   const [heading, setHeading] = useState(null);
@@ -71,7 +77,7 @@ function createNextState(currentState, key, value, heading, useCompass) {
   }
 
   if (useCompass && heading !== null) {
-    nextState.forwardBearing = Math.round(heading);
+    nextState.antennaDirection = Math.round(heading);
   }
 
   return nextState;
@@ -83,8 +89,9 @@ export default function App() {
   const { heading, supported } = useDeviceHeading(useCompass);
 
   const hydratedSim = useCompass && heading !== null
-    ? { ...sim, forwardBearing: Math.round(heading) }
+    ? { ...sim, antennaDirection: Math.round(heading) }
     : sim;
+  const telemetry = getSimulationTelemetry(hydratedSim);
 
   const updateSim = (key, value) => {
     setSim((currentState) => createNextState(currentState, key, value, heading, useCompass));
@@ -108,8 +115,9 @@ export default function App() {
             setUseCompass={setUseCompass}
             heading={heading}
             supported={supported}
+            telemetry={telemetry}
           />
-          <MapView sim={hydratedSim} updateSim={updateSim} />
+          <MapView sim={hydratedSim} updateSim={updateSim} useCompass={useCompass} telemetry={telemetry} />
         </div>
       </div>
     </div>

@@ -29,7 +29,7 @@ export const MAP_TIPS = [
     label: "Drag controls",
     icon: "move",
     tone: "text-[#bf8d8c]",
-    text: "Drag center blue dot to move antenna. Drag outer blue dot to change direction.",
+    text: "Drag center blue dot to move antenna. Drag outer blue dot to change direction unless gyro steering is on.",
   },
   {
     label: "Wall behavior",
@@ -59,6 +59,47 @@ export function getResetMapState(currentState) {
     depthUnits: defaults.depthUnits,
     antenna: defaults.antenna,
     surfaces: defaults.surfaces,
+  };
+}
+
+export function getSimulationTelemetry(sim) {
+  const {
+    antenna,
+    antennaDirection,
+    beamSpread,
+    depthUnits,
+    distanceKm,
+    forwardBearing,
+    surfaces,
+    targetBearing,
+    wallBounces,
+    widthUnits,
+  } = sim;
+
+  const localAntennaDirection = norm360(antennaDirection - forwardBearing);
+  const escapeDistance = Math.max(500, Math.min(distanceKm * 1000, 20000));
+  const sharedParams = {
+    origin: antenna,
+    width: widthUnits,
+    depth: depthUnits,
+    maxReflections: wallBounces,
+    escapeDistanceUnits: escapeDistance,
+    forwardBearingDeg: forwardBearing,
+    surfaces,
+  };
+
+  const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
+  const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
+  const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
+  const alignmentError = main.didExit ? Math.abs(shortestDelta(main.finalTrueBearing, targetBearing)) : null;
+  const isAligned = main.didExit && alignmentError !== null && alignmentError <= 2;
+
+  return {
+    escapeDistance,
+    localAntennaDirection,
+    rays: { main, left, right },
+    alignmentError,
+    isAligned,
   };
 }
 

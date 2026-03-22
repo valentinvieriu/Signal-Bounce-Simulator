@@ -16,8 +16,9 @@ function CompassMarkerCard({ label, value, color, description }) {
   );
 }
 
-export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported }) {
+export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported, telemetry }) {
   const { distanceKm, forwardBearing, targetBearing, antennaDirection } = sim;
+  const { alignmentError, isAligned } = telemetry;
   const size = 330;
   const radius = size / 2;
   const dialRef = useRef(null);
@@ -46,10 +47,26 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   };
 
   const draggableHandles = [
-    { id: "north", ...markerPositions.north, fill: "rgba(17,24,39,0.14)", dot: "#111827", lock: useCompass },
+    { id: "north", ...markerPositions.north, fill: "rgba(17,24,39,0.14)", dot: "#111827", lock: false },
     { id: "node", ...markerPositions.node, fill: "rgba(191,141,140,0.22)", dot: "#bf8d8c", lock: false },
-    { id: "direction", ...markerPositions.direction, fill: "rgba(37,99,235,0.22)", dot: "#2563eb", lock: false },
+    { id: "direction", ...markerPositions.direction, fill: "rgba(37,99,235,0.22)", dot: "#2563eb", lock: useCompass },
   ];
+
+  const targetSweepStart = norm360(targetBearing - forwardBearing);
+  const targetSweepEnd = norm360(antennaDirection - forwardBearing);
+  const sweepDelta = ((targetSweepEnd - targetSweepStart + 540) % 360) - 180;
+  const sweep = sweepDelta;
+  const sweepRadius = radius - 98;
+  const largeArcFlag = Math.abs(sweep) > 180 ? 1 : 0;
+  const sweepDirection = sweep >= 0 ? 1 : 0;
+  const sweepStart = {
+    x: radius + Math.cos(degToRad(targetSweepStart - 90)) * sweepRadius,
+    y: radius + Math.sin(degToRad(targetSweepStart - 90)) * sweepRadius,
+  };
+  const sweepEnd = {
+    x: radius + Math.cos(degToRad(targetSweepStart + sweep - 90)) * sweepRadius,
+    y: radius + Math.sin(degToRad(targetSweepStart + sweep - 90)) * sweepRadius,
+  };
 
   return (
     <div className="flex flex-col rounded-[2rem] border border-zinc-200 bg-white/90 shadow-sm">
@@ -170,6 +187,14 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               strokeDasharray="4 5"
               pointerEvents="none"
             />
+            <path
+              d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${largeArcFlag} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
+              fill="none"
+              stroke={isAligned ? "#16a34a" : "rgba(37,99,235,0.45)"}
+              strokeWidth="10"
+              strokeLinecap="round"
+              pointerEvents="none"
+            />
 
             {draggableHandles.map((handle) => (
               <g key={handle.id}>
@@ -197,10 +222,29 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
         </div>
 
         <div className="mt-2 grid gap-4 rounded-3xl border border-zinc-100 bg-zinc-50 p-4">
+          <div className={`rounded-2xl border px-4 py-3 ${isAligned ? "border-emerald-200 bg-emerald-50" : "border-zinc-200 bg-white"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className={`text-sm font-semibold ${isAligned ? "text-emerald-900" : "text-zinc-900"}`}>
+                  {isAligned ? "Radar aligned" : "Radar alignment"}
+                </p>
+                <p className={`mt-1 text-xs ${isAligned ? "text-emerald-700" : "text-zinc-500"}`}>
+                  {isAligned
+                    ? "Beam exit and target bearing are matched. The sweep turns green when you are on target."
+                    : alignmentError !== null
+                      ? `Point the blue antenna dot until the sweep turns green. Current error: ${alignmentError.toFixed(1)}°.`
+                      : "No exit path yet. Adjust the beam or wall openings until the radar can see the target."}
+                </p>
+              </div>
+              <div className={`rounded-full px-3 py-1 text-xs font-semibold ${isAligned ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-700"}`}>
+                {isAligned ? "Matched" : alignmentError !== null ? `${alignmentError.toFixed(1)}° off` : "No exit"}
+              </div>
+            </div>
+          </div>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-medium text-zinc-900">Use device compass</p>
-              <p className="mt-1 text-xs text-zinc-500">Drag dots to adjust orientation manually.</p>
+              <p className="text-sm font-medium text-zinc-900">Use gyroscope to steer beam</p>
+              <p className="mt-1 text-xs text-zinc-500">Keep north and target placement fixed, then point your phone to move the blue antenna dot.</p>
             </div>
             <Switch checked={useCompass} onCheckedChange={setUseCompass} />
           </div>
@@ -211,7 +255,6 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               onChange={(value) => updateSim("forwardBearing", value)}
               min={0}
               max={359}
-              disabled={useCompass}
             />
             <SliderRow label="Target node" value={targetBearing} onChange={(value) => updateSim("targetBearing", value)} min={0} max={359} />
             <SliderRow
@@ -220,6 +263,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               onChange={(value) => updateSim("antennaDirection", value)}
               min={0}
               max={359}
+              disabled={useCompass}
             />
           </div>
           <NumberField
@@ -230,7 +274,9 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
             onChange={(event) => updateSim("distanceKm", Math.max(0, Number(event.target.value) || 0))}
           />
           <div className="text-xs text-zinc-500">
-            {supported ? `Live heading ${heading !== null ? `${Math.round(heading)}°` : "waiting…"}` : "Compass sensor not detected."}
+            {supported
+              ? `Live heading ${heading !== null ? `${Math.round(heading)}°` : "waiting…"}${useCompass ? " · steering antenna" : ""}`
+              : "Compass sensor not detected."}
           </div>
           <div className="flex flex-wrap gap-2 pt-2">
             <Button
