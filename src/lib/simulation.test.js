@@ -7,7 +7,9 @@ import {
   shortestDelta,
   distance,
   createDefaultSimulationState,
+  getResetCompassState,
   getResetMapState,
+  getSimulationTelemetry,
   traceRay,
   DEFAULTS,
 } from "./simulation";
@@ -121,6 +123,40 @@ describe("getResetMapState", () => {
   });
 });
 
+describe("getResetCompassState", () => {
+  it("resets compass fields to defaults", () => {
+    const modified = {
+      ...createDefaultSimulationState(),
+      gyroMode: "antenna",
+      forwardBearing: 12,
+      targetBearing: 34,
+      antennaDirection: 56,
+      distanceKm: 7.89,
+    };
+
+    const reset = getResetCompassState(modified);
+    expect(reset.gyroMode).toBe(DEFAULTS.gyroMode);
+    expect(reset.forwardBearing).toBe(DEFAULTS.forwardBearing);
+    expect(reset.targetBearing).toBe(DEFAULTS.targetBearing);
+    expect(reset.antennaDirection).toBe(DEFAULTS.antennaDirection);
+    expect(reset.distanceKm).toBe(DEFAULTS.distanceKm);
+  });
+
+  it("preserves map configuration", () => {
+    const modified = {
+      ...createDefaultSimulationState(),
+      widthUnits: 120,
+      depthUnits: 40,
+      antenna: { x: 15, y: 18 },
+    };
+
+    const reset = getResetCompassState(modified);
+    expect(reset.widthUnits).toBe(120);
+    expect(reset.depthUnits).toBe(40);
+    expect(reset.antenna).toEqual({ x: 15, y: 18 });
+  });
+});
+
 // --- Ray tracer ---
 
 describe("traceRay", () => {
@@ -202,5 +238,41 @@ describe("traceRay", () => {
     });
     // Local bearing 0 + forward 90 = true bearing 90
     expect(result.finalTrueBearing).toBeCloseTo(90);
+  });
+});
+
+describe("getSimulationTelemetry", () => {
+  it("returns aligned telemetry when the exit bearing matches the target", () => {
+    const telemetry = getSimulationTelemetry({
+      ...createDefaultSimulationState(),
+      forwardBearing: 0,
+      antennaDirection: 0,
+      targetBearing: 0,
+      beamSpread: 30,
+      wallBounces: 0,
+      surfaces: { top: "pass", right: "reflect", bottom: "reflect", left: "reflect" },
+    });
+
+    expect(telemetry.localAntennaDirection).toBe(0);
+    expect(telemetry.rays.main.didExit).toBe(true);
+    expect(telemetry.rays.main.finalTrueBearing).toBeCloseTo(0);
+    expect(telemetry.alignmentError).toBeCloseTo(0);
+    expect(telemetry.isAligned).toBe(true);
+  });
+
+  it("returns non-aligned telemetry when the exit bearing misses the target", () => {
+    const telemetry = getSimulationTelemetry({
+      ...createDefaultSimulationState(),
+      forwardBearing: 0,
+      antennaDirection: 0,
+      targetBearing: 25,
+      beamSpread: 30,
+      wallBounces: 0,
+      surfaces: { top: "pass", right: "reflect", bottom: "reflect", left: "reflect" },
+    });
+
+    expect(telemetry.rays.main.didExit).toBe(true);
+    expect(telemetry.alignmentError).toBeCloseTo(25);
+    expect(telemetry.isAligned).toBe(false);
   });
 });

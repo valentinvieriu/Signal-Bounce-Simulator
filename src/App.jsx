@@ -1,12 +1,24 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
-import { clamp, createDefaultSimulationState, getResetMapState, norm360 } from "./lib/simulation";
+import {
+  clamp,
+  createDefaultSimulationState,
+  getResetCompassState,
+  getResetMapState,
+  getSimulationTelemetry,
+  norm360,
+} from "./lib/simulation";
 
-function useDeviceHeading(enabled) {
+function useDeviceHeading(enabled, onHeadingChange) {
   const [heading, setHeading] = useState(null);
+  const onHeadingChangeRef = useRef(onHeadingChange);
   const supported = typeof window !== "undefined" && "DeviceOrientationEvent" in window;
+
+  useEffect(() => {
+    onHeadingChangeRef.current = onHeadingChange;
+  }, [onHeadingChange]);
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") {
@@ -24,6 +36,7 @@ function useDeviceHeading(enabled) {
 
       if (!cancelled && nextHeading !== null) {
         setHeading(nextHeading);
+        onHeadingChangeRef.current?.(nextHeading);
       }
     };
 
@@ -55,9 +68,13 @@ function useDeviceHeading(enabled) {
   return { heading, supported };
 }
 
-function createNextState(currentState, key, value, heading, useCompass) {
+function createNextState(currentState, key, value) {
   if (key === "resetMap") {
     return getResetMapState(currentState);
+  }
+
+  if (key === "resetCompass") {
+    return getResetCompassState(currentState);
   }
 
   const nextValue = typeof value === "function" ? value(currentState[key]) : value;
@@ -70,24 +87,30 @@ function createNextState(currentState, key, value, heading, useCompass) {
     };
   }
 
-  if (useCompass && heading !== null) {
-    nextState.forwardBearing = Math.round(heading);
-  }
-
   return nextState;
 }
 
 export default function App() {
   const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
-  const { heading, supported } = useDeviceHeading(useCompass);
+  const gyroMode = sim.gyroMode ?? "north";
+  const controlledKey = gyroMode === "antenna" ? "antennaDirection" : "forwardBearing";
 
-  const hydratedSim = useCompass && heading !== null
-    ? { ...sim, forwardBearing: Math.round(heading) }
-    : sim;
+  const handleHeadingChange = useCallback((nextHeading) => {
+    const roundedHeading = Math.round(nextHeading);
+    setSim((currentState) => (
+      currentState[controlledKey] === roundedHeading
+        ? currentState
+        : { ...currentState, [controlledKey]: roundedHeading }
+    ));
+  }, [controlledKey]);
+
+  const { heading, supported } = useDeviceHeading(useCompass, handleHeadingChange);
+
+  const telemetry = useMemo(() => getSimulationTelemetry(sim), [sim]);
 
   const updateSim = (key, value) => {
-    setSim((currentState) => createNextState(currentState, key, value, heading, useCompass));
+    setSim((currentState) => createNextState(currentState, key, value));
   };
 
   return (
@@ -102,14 +125,22 @@ export default function App() {
         </div>
         <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
           <Compass
-            sim={hydratedSim}
+            sim={sim}
             updateSim={updateSim}
             useCompass={useCompass}
             setUseCompass={setUseCompass}
             heading={heading}
             supported={supported}
+            telemetry={telemetry}
+            gyroMode={gyroMode}
           />
-          <MapView sim={hydratedSim} updateSim={updateSim} />
+          <MapView
+            sim={sim}
+            updateSim={updateSim}
+            useCompass={useCompass}
+            telemetry={telemetry}
+            gyroMode={gyroMode}
+          />
         </div>
       </div>
     </div>
