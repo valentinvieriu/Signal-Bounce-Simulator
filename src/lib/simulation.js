@@ -73,6 +73,8 @@ const ALIGNMENT_PALETTES = {
   },
 };
 
+const EARTH_RADIUS_M = 6371000;
+
 export const DEFAULTS = {
   gyroMode: "north",
   distanceKm: 5.32,
@@ -112,6 +114,61 @@ export function getAlignmentPalette(state) {
   return ALIGNMENT_PALETTES[state] ?? ALIGNMENT_PALETTES.default;
 }
 
+function roundCoordinate(value, digits = 6) {
+  return Number(value.toFixed(digits));
+}
+
+function splitCsvRow(row) {
+  return row.split(",").map((cell) => cell.trim());
+}
+
+function parseNumericCell(value) {
+  const normalized = value.replace(/[^0-9+-.]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isHeaderLine(line) {
+  return /SeqNo/i.test(line) && /Latitude/i.test(line) && /Longitude/i.test(line);
+}
+
+function isDividerLine(line) {
+  return /^[-—–]{2,}$/.test(line);
+}
+
+function createImportedNodeId({ seqNo, latitude, longitude, rowIndex }) {
+  const normalizedSeq = String(seqNo || rowIndex).replace(/\s+/g, "-").toLowerCase();
+  return `node-${normalizedSeq}-${latitude.toFixed(6)}-${longitude.toFixed(6)}`;
+}
+
+function buildImportedNode(row, rowIndex) {
+  const latitude = parseNumericCell(row.Latitude ?? "");
+  const longitude = parseNumericCell(row.Longitude ?? "");
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  const seqNo = (row.SeqNo ?? String(rowIndex + 1)).trim();
+  const roundedLatitude = roundCoordinate(latitude);
+  const roundedLongitude = roundCoordinate(longitude);
+
+  return {
+    id: createImportedNodeId({ seqNo, latitude: roundedLatitude, longitude: roundedLongitude, rowIndex }),
+    name: `Node ${seqNo || rowIndex + 1}`,
+    seqNo,
+    latitude: roundedLatitude,
+    longitude: roundedLongitude,
+    altitude: parseNumericCell(row.Altitude ?? ""),
+    sats: parseNumericCell(row.Sats ?? ""),
+    speed: parseNumericCell(row.Speed ?? ""),
+    heading: parseNumericCell(row.Heading ?? ""),
+    snr: parseNumericCell(row.SNR ?? ""),
+    timestamp: (row.Timestamp ?? "Unknown Age").trim() || "Unknown Age",
+    source: "log import",
+  };
+}
+
 export function createDefaultSimulationState() {
   return {
     ...DEFAULTS,
@@ -146,6 +203,91 @@ export function getResetCompassState(currentState) {
     targetBearing: defaults.targetBearing,
     forwardBearing: defaults.forwardBearing,
     antennaDirection: defaults.antennaDirection,
+  };
+}
+
+export function normalizeGeoLocation(location) {
+  if (!location) {
+    return null;
+  }
+
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return {
+    latitude: roundCoordinate(latitude),
+    longitude: roundCoordinate(longitude),
+    accuracy: Number.isFinite(Number(location.accuracy)) ? Number(location.accuracy) : null,
+    source: location.source ?? "manual",
+    label: location.label ?? "Reference location",
+  };
+}
+
+export function extractNodeLogs(text) {
+  if (!text) {
+    return [];
+  }
+
+  const rawLines = text.split(/\r?\n/).map((line) => line.trim());
+  const nodes = [];
+  let activeHeaders = null;
+
+  rawLines.forEach((line) => {
+    if (!line || isDividerLine(line)) {
+      return;
+    }
+
+    if (isHeaderLine(line)) {
+      activeHeaders = splitCsvRow(line);
+      return;
+    }
+
+    if (!activeHeaders) {
+      return;
+    }
+
+    const values = splitCsvRow(line);
+    const row = Object.fromEntries(activeHeaders.map((header, cellIndex) => [header, values[cellIndex] ?? ""]));
+    const node = buildImportedNode(row, nodes.length);
+
+    if (node) {
+      nodes.push(node);
+    }
+  });
+
+  return nodes;
+}
+
+export function getGeoMetrics(referenceLocation, nodeLocation) {
+  const reference = normalizeGeoLocation(referenceLocation);
+  const node = normalizeGeoLocation(nodeLocation);
+
+  if (!reference || !node) {
+    return null;
+  }
+
+  const lat1 = degToRad(reference.latitude);
+  const lat2 = degToRad(node.latitude);
+  const deltaLat = degToRad(node.latitude - reference.latitude);
+  const deltaLon = degToRad(node.longitude - reference.longitude);
+
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  const distanceMeters = 2 * EARTH_RADIUS_M * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+
+  const y = Math.sin(deltaLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLon);
+  const bearing = norm360(radToDeg(Math.atan2(y, x)));
+
+  return {
+    distanceMeters,
+    distanceKm: distanceMeters / 1000,
+    bearing,
   };
 }
 

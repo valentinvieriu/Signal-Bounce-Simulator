@@ -2,13 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
+import NodeImportPanel from "./components/NodeImportPanel";
 import {
   clamp,
   createDefaultSimulationState,
+  extractNodeLogs,
+  getGeoMetrics,
   getResetCompassState,
   getResetMapState,
   getSimulationTelemetry,
   norm360,
+  normalizeGeoLocation,
 } from "./lib/simulation";
 
 function useDeviceHeading(enabled, onHeadingChange) {
@@ -93,6 +97,10 @@ function createNextState(currentState, key, value) {
 export default function App() {
   const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
+  const [referenceLocation, setReferenceLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState("Use your GPS on mobile or browser geolocation on desktop to calculate the imported node bearing automatically.");
+  const [importedNodes, setImportedNodes] = useState([]);
+  const [activeNodeId, setActiveNodeId] = useState(null);
   const gyroMode = sim.gyroMode ?? "north";
   const controlledKey = gyroMode === "antenna" ? "antennaDirection" : "forwardBearing";
 
@@ -108,10 +116,140 @@ export default function App() {
   const { heading, supported } = useDeviceHeading(useCompass, handleHeadingChange);
 
   const telemetry = useMemo(() => getSimulationTelemetry(sim), [sim]);
+  const activeNode = useMemo(
+    () => importedNodes.find((node) => node.id === activeNodeId) ?? null,
+    [activeNodeId, importedNodes],
+  );
+  const activeNodeMetrics = useMemo(
+    () => (activeNode ? getGeoMetrics(referenceLocation, activeNode) : null),
+    [activeNode, referenceLocation],
+  );
+
+  const syncSimulationToNode = useCallback((node, location) => {
+    const metrics = node ? getGeoMetrics(location, node) : null;
+    if (!metrics) {
+      return;
+    }
+
+    setSim((currentState) => {
+      const nextBearing = Math.round(metrics.bearing * 10) / 10;
+      const nextDistance = Math.round(metrics.distanceKm * 1000) / 1000;
+      if (currentState.targetBearing === nextBearing && currentState.distanceKm === nextDistance) {
+        return currentState;
+      }
+
+      return {
+        ...currentState,
+        targetBearing: nextBearing,
+        distanceKm: nextDistance,
+      };
+    });
+  }, []);
 
   const updateSim = (key, value) => {
     setSim((currentState) => createNextState(currentState, key, value));
   };
+
+  const selectActiveNode = useCallback((nodeId) => {
+    setActiveNodeId(nodeId);
+    const nextNode = importedNodes.find((node) => node.id === nodeId) ?? null;
+    syncSimulationToNode(nextNode, referenceLocation);
+  }, [importedNodes, referenceLocation, syncSimulationToNode]);
+
+  const handleImportText = useCallback((text) => {
+    const parsedNodes = extractNodeLogs(text);
+    if (!parsedNodes.length) {
+      return { imported: 0, message: "No valid node rows were found in the uploaded log." };
+    }
+
+    const knownIds = new Set(importedNodes.map((node) => node.id));
+    const uniqueNodes = parsedNodes.filter((node) => !knownIds.has(node.id));
+
+    if (!uniqueNodes.length) {
+      return { imported: 0, message: "Those node rows are already loaded." };
+    }
+
+    setImportedNodes((currentNodes) => [...currentNodes, ...uniqueNodes]);
+
+    if (!activeNodeId) {
+      setActiveNodeId(uniqueNodes[0].id);
+      syncSimulationToNode(uniqueNodes[0], referenceLocation);
+    }
+
+    return {
+      imported: uniqueNodes.length,
+      message: `Imported ${uniqueNodes.length} node${uniqueNodes.length === 1 ? "" : "s"} from the log.`,
+    };
+  }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
+
+  const updateNode = useCallback((nodeId, updates) => {
+    setImportedNodes((currentNodes) => {
+      const nextNodes = currentNodes.map((node) => (node.id === nodeId ? { ...node, ...updates } : node));
+      const nextActiveNode = nextNodes.find((node) => node.id === activeNodeId) ?? null;
+      syncSimulationToNode(nextActiveNode, referenceLocation);
+      return nextNodes;
+    });
+  }, [activeNodeId, referenceLocation, syncSimulationToNode]);
+
+  const removeNode = useCallback((nodeId) => {
+    setImportedNodes((currentNodes) => {
+      const nextNodes = currentNodes.filter((node) => node.id !== nodeId);
+      const nextActiveNode = activeNodeId === nodeId
+        ? (nextNodes[0] ?? null)
+        : (nextNodes.find((node) => node.id === activeNodeId) ?? null);
+      setActiveNodeId(nextActiveNode?.id ?? null);
+      syncSimulationToNode(nextActiveNode, referenceLocation);
+      return nextNodes;
+    });
+  }, [activeNodeId, referenceLocation, syncSimulationToNode]);
+
+  const updateReferenceLocation = useCallback((location, sourceMessage) => {
+    const normalized = normalizeGeoLocation(location);
+    if (!normalized) {
+      setLocationStatus("Enter a valid latitude and longitude to calculate node bearings.");
+      return false;
+    }
+
+    setReferenceLocation(normalized);
+    setLocationStatus(sourceMessage ?? `Reference location ready at ${normalized.latitude}, ${normalized.longitude}.`);
+    syncSimulationToNode(activeNode, normalized);
+    return true;
+  }, [activeNode, syncSimulationToNode]);
+
+  const requestCurrentLocation = useCallback(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationStatus("Geolocation is not available in this browser.");
+      return;
+    }
+
+    setLocationStatus("Requesting your current location…");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const normalized = normalizeGeoLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          source: "device",
+          label: "My location",
+        });
+
+        if (!normalized) {
+          setLocationStatus("Location was returned, but it could not be parsed.");
+          return;
+        }
+
+        setReferenceLocation(normalized);
+        setLocationStatus(
+          `Using ${normalized.label.toLowerCase()} from the browser GPS/geolocation API${normalized.accuracy ? ` (±${Math.round(normalized.accuracy)} m)` : ""}.`,
+        );
+        syncSimulationToNode(activeNode, normalized);
+      },
+      (error) => {
+        setLocationStatus(`Location request failed: ${error.message}`);
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 },
+    );
+  }, [activeNode, syncSimulationToNode]);
 
   return (
     <div className="min-h-screen bg-[#ececec] font-sans text-zinc-950">
@@ -123,23 +261,41 @@ export default function App() {
             Configure true north and target node placement. Adjust the transmitter direction and test wall materials to simulate signal paths.
           </p>
         </div>
-        <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-          <Compass
-            sim={sim}
-            updateSim={updateSim}
-            useCompass={useCompass}
-            setUseCompass={setUseCompass}
-            heading={heading}
-            supported={supported}
-            telemetry={telemetry}
-            gyroMode={gyroMode}
-          />
+        <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+          <div className="space-y-6">
+            <Compass
+              sim={sim}
+              updateSim={updateSim}
+              useCompass={useCompass}
+              setUseCompass={setUseCompass}
+              heading={heading}
+              supported={supported}
+              telemetry={telemetry}
+              gyroMode={gyroMode}
+            />
+            <NodeImportPanel
+              importedNodes={importedNodes}
+              activeNodeId={activeNodeId}
+              activeNodeMetrics={activeNodeMetrics}
+              referenceLocation={referenceLocation}
+              locationStatus={locationStatus}
+              requestCurrentLocation={requestCurrentLocation}
+              onImportText={handleImportText}
+              onSelectNode={selectActiveNode}
+              onUpdateNode={updateNode}
+              onRemoveNode={removeNode}
+              onUpdateReferenceLocation={updateReferenceLocation}
+            />
+          </div>
           <MapView
             sim={sim}
             updateSim={updateSim}
             useCompass={useCompass}
             telemetry={telemetry}
             gyroMode={gyroMode}
+            activeNode={activeNode}
+            activeNodeMetrics={activeNodeMetrics}
+            referenceLocation={referenceLocation}
           />
         </div>
       </div>

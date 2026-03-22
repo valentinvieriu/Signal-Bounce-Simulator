@@ -7,10 +7,13 @@ import {
   shortestDelta,
   distance,
   createDefaultSimulationState,
+  extractNodeLogs,
   getAlignmentProfile,
+  getGeoMetrics,
   getResetCompassState,
   getResetMapState,
   getSimulationTelemetry,
+  normalizeGeoLocation,
   smoothstep,
   traceRay,
   DEFAULTS,
@@ -396,5 +399,61 @@ describe("getAlignmentProfile", () => {
 
     expect(profile.state).toBe("missed");
     expect(profile.score).toBe(0);
+  });
+});
+
+
+describe("node log import", () => {
+  it("extracts node rows from pasted log blocks and repeated headers", () => {
+    const nodes = extractNodeLogs(`SeqNo, Latitude, Longitude, Altitude, Sats, Speed, Heading, SNR, Timestamp
+0, 48.1591296, 11.55072, 518, 0, 0, 0, -7.25, Unknown Age
+1, 48.103424, 11.5081216, 541, 12, 0, 0, -10.25, 22.03.26 06:54
+
+---
+
+SeqNo, Latitude, Longitude, Altitude, Sats, Speed, Heading, SNR, Timestamp
+2, 48.1035, 11.5082, 541, 11, 0, 0, -11.25, 22.03.26 06:55`);
+
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0]).toMatchObject({
+      seqNo: "0",
+      latitude: 48.15913,
+      longitude: 11.55072,
+      altitude: 518,
+      timestamp: "Unknown Age",
+    });
+    expect(nodes[1]).toMatchObject({
+      seqNo: "1",
+      latitude: 48.103424,
+      longitude: 11.508122,
+      sats: 12,
+      snr: -10.25,
+    });
+    expect(nodes[2]).toMatchObject({
+      seqNo: "2",
+      latitude: 48.1035,
+      longitude: 11.5082,
+    });
+    expect(nodes[0].id).toBe("node-0-48.159130-11.550720");
+  });
+
+  it("normalizes manual geolocation input", () => {
+    expect(normalizeGeoLocation({ latitude: 48.1234567, longitude: 11.7654321 })).toEqual({
+      latitude: 48.123457,
+      longitude: 11.765432,
+      accuracy: null,
+      source: "manual",
+      label: "Reference location",
+    });
+  });
+
+  it("computes a bearing and distance between reference and node positions", () => {
+    const metrics = getGeoMetrics(
+      { latitude: 48.103424, longitude: 11.5081216 },
+      { latitude: 48.1591296, longitude: 11.55072 },
+    );
+
+    expect(metrics.distanceKm).toBeCloseTo(6.96, 1);
+    expect(metrics.bearing).toBeCloseTo(27.0, 1);
   });
 });

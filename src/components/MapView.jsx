@@ -60,7 +60,7 @@ function getFirstSegmentPoints(result) {
 
 const MotionCircle = motion.circle;
 
-export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode }) {
+export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode, activeNode, activeNodeMetrics, referenceLocation }) {
   const { widthUnits, depthUnits, beamSpread, wallBounces, forwardBearing, targetBearing, antennaDirection, antenna, surfaces } = sim;
   const viewWidth = 700;
   const viewDepth = 500;
@@ -165,6 +165,8 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
     { label: "Reflections", value: String(main.reflectionsUsed) },
     { label: "Alignment error", value: alignmentError !== null ? `${alignmentError.toFixed(1)}°` : "—" },
     { label: "Alignment potential", value: `${Math.round(alignment.score * 100)}%`, accent: alignment.score >= 0.7 },
+    { label: "Active node", value: activeNode ? `${activeNode.latitude.toFixed(5)}, ${activeNode.longitude.toFixed(5)}` : "No imported node" },
+    { label: "Geo solve", value: activeNodeMetrics ? `${activeNodeMetrics.distanceKm.toFixed(3)} km · ${activeNodeMetrics.bearing.toFixed(1)}°` : referenceLocation ? "Select a node" : "Awaiting location" },
   ];
 
   return (
