@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
 import {
   clamp,
   createDefaultSimulationState,
+  getResetCompassState,
   getResetMapState,
   getSimulationTelemetry,
   norm360,
@@ -12,7 +13,12 @@ import {
 
 function useDeviceHeading(enabled, onHeadingChange) {
   const [heading, setHeading] = useState(null);
+  const onHeadingChangeRef = useRef(onHeadingChange);
   const supported = typeof window !== "undefined" && "DeviceOrientationEvent" in window;
+
+  useEffect(() => {
+    onHeadingChangeRef.current = onHeadingChange;
+  }, [onHeadingChange]);
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") {
@@ -30,7 +36,7 @@ function useDeviceHeading(enabled, onHeadingChange) {
 
       if (!cancelled && nextHeading !== null) {
         setHeading(nextHeading);
-        onHeadingChange?.(nextHeading);
+        onHeadingChangeRef.current?.(nextHeading);
       }
     };
 
@@ -57,7 +63,7 @@ function useDeviceHeading(enabled, onHeadingChange) {
       cancelled = true;
       window.removeEventListener("deviceorientation", handler, true);
     };
-  }, [enabled, onHeadingChange]);
+  }, [enabled]);
 
   return { heading, supported };
 }
@@ -65,6 +71,10 @@ function useDeviceHeading(enabled, onHeadingChange) {
 function createNextState(currentState, key, value) {
   if (key === "resetMap") {
     return getResetMapState(currentState);
+  }
+
+  if (key === "resetCompass") {
+    return getResetCompassState(currentState);
   }
 
   const nextValue = typeof value === "function" ? value(currentState[key]) : value;
@@ -97,7 +107,7 @@ export default function App() {
 
   const { heading, supported } = useDeviceHeading(useCompass, handleHeadingChange);
 
-  const telemetry = getSimulationTelemetry(sim);
+  const telemetry = useMemo(() => getSimulationTelemetry(sim), [sim]);
 
   const updateSim = (key, value) => {
     setSim((currentState) => createNextState(currentState, key, value));

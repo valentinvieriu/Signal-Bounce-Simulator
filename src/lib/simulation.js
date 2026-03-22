@@ -30,7 +30,7 @@ export const MAP_TIPS = [
     label: "Drag controls",
     icon: "move",
     tone: "text-[#bf8d8c]",
-    text: "Drag center blue dot to move antenna. Drag outer blue dot to change direction unless the gyro is currently driving antenna aim.",
+    text: "Drag center blue dot to move antenna. Drag outer blue dot unless gyro is steering it.",
   },
   {
     label: "Wall behavior",
@@ -61,6 +61,19 @@ export function getResetMapState(currentState) {
     depthUnits: defaults.depthUnits,
     antenna: defaults.antenna,
     surfaces: defaults.surfaces,
+  };
+}
+
+export function getResetCompassState(currentState) {
+  const defaults = createDefaultSimulationState();
+
+  return {
+    ...currentState,
+    gyroMode: defaults.gyroMode,
+    distanceKm: defaults.distanceKm,
+    targetBearing: defaults.targetBearing,
+    forwardBearing: defaults.forwardBearing,
+    antennaDirection: defaults.antennaDirection,
   };
 }
 

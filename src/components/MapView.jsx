@@ -6,7 +6,6 @@ import {
   MAP_TIPS,
   clamp,
   degToRad,
-  getSimulationTelemetry,
   norm360,
   radToDeg,
 } from "../lib/simulation";
@@ -101,9 +100,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gridStep = dominantDimension > 200 ? 25 : dominantDimension > 100 ? 10 : dominantDimension > 40 ? 5 : dominantDimension > 10 ? 2 : 1;
   const gridPx = (mapW / widthUnits) * gridStep;
 
-  const fallbackTelemetry = useMemo(() => getSimulationTelemetry(sim), [sim]);
-  const activeTelemetry = telemetry ?? fallbackTelemetry;
-  const { escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = activeTelemetry;
+  const { escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
   const { main, left, right } = rays;
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);

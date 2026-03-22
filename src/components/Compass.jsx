@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { COMPASS_MARKERS, DEFAULTS, degToRad, norm360, radToDeg } from "../lib/simulation";
+import { COMPASS_MARKERS, degToRad, norm360, radToDeg } from "../lib/simulation";
 import { Button, Label, NumberField, SliderRow, Switch } from "./ui";
 
 function CompassMarkerCard({ label, value, color, description }) {
@@ -22,6 +22,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const size = 330;
   const radius = size / 2;
   const dialRef = useRef(null);
+  const dragMovedRef = useRef(false);
   const [drag, setDrag] = useState(null); // { mode, pointerId }
   const gyroControlsNorth = useCompass && gyroMode === "north";
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
@@ -57,6 +58,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const targetSweepStart = norm360(targetBearing - forwardBearing);
   const targetSweepEnd = norm360(antennaDirection - forwardBearing);
   const sweepDelta = ((targetSweepEnd - targetSweepStart + 540) % 360) - 180;
+  // Draw the shortest arc from target bearing to antenna bearing so the radar shows how far apart they are.
   const sweep = sweepDelta;
   const sweepRadius = radius - 98;
   const largeArcFlag = Math.abs(sweep) > 180 ? 1 : 0;
@@ -100,6 +102,11 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
             viewBox={`0 0 ${size} ${size}`}
             className="h-[330px] w-[330px] touch-none select-none"
             onClick={() => {
+              if (dragMovedRef.current) {
+                dragMovedRef.current = false;
+                return;
+              }
+
               if (useCompass) {
                 updateSim("gyroMode", gyroMode === "north" ? "antenna" : "north");
               }
@@ -107,6 +114,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
             onPointerMove={(event) => {
               if (!drag || event.pointerId !== drag.pointerId) return;
 
+              dragMovedRef.current = true;
               const angle = pointToAngle(event.clientX, event.clientY);
               if (drag.mode === "north" && !gyroControlsNorth) {
                 updateSim("forwardBearing", norm360(-angle));
@@ -217,6 +225,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
                   onPointerDown={(event) => {
                     if (handle.lock) return;
                     event.stopPropagation();
+                    dragMovedRef.current = false;
                     setDrag({ mode: handle.id, pointerId: event.pointerId });
                     dialRef.current?.setPointerCapture(event.pointerId);
                   }}
@@ -301,11 +310,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
           <div className="flex flex-wrap gap-2 pt-2">
             <Button
               onClick={() => {
-                updateSim("gyroMode", DEFAULTS.gyroMode);
-                updateSim("forwardBearing", DEFAULTS.forwardBearing);
-                updateSim("targetBearing", DEFAULTS.targetBearing);
-                updateSim("antennaDirection", DEFAULTS.antennaDirection);
-                updateSim("distanceKm", DEFAULTS.distanceKm);
+                updateSim("resetCompass");
                 setUseCompass(false);
               }}
             >
