@@ -39,16 +39,26 @@ export const MAP_TIPS = [
   },
 ];
 
+export function createDefaultSimulationState() {
+  return {
+    ...DEFAULTS,
+    antenna: { ...DEFAULTS.antenna },
+    surfaces: { ...DEFAULTS.surfaces },
+  };
+}
+
 export function getResetMapState(currentState) {
+  const defaults = createDefaultSimulationState();
+
   return {
     ...currentState,
-    antennaDirection: DEFAULTS.antennaDirection,
-    beamSpread: DEFAULTS.beamSpread,
-    wallBounces: DEFAULTS.wallBounces,
-    widthUnits: DEFAULTS.widthUnits,
-    depthUnits: DEFAULTS.depthUnits,
-    antenna: DEFAULTS.antenna,
-    surfaces: DEFAULTS.surfaces,
+    antennaDirection: defaults.antennaDirection,
+    beamSpread: defaults.beamSpread,
+    wallBounces: defaults.wallBounces,
+    widthUnits: defaults.widthUnits,
+    depthUnits: defaults.depthUnits,
+    antenna: defaults.antenna,
+    surfaces: defaults.surfaces,
   };
 }
 

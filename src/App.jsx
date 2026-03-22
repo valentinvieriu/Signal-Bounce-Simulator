@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
-import { DEFAULTS, clamp, getResetMapState, norm360 } from "./lib/simulation";
+import { clamp, createDefaultSimulationState, getResetMapState, norm360 } from "./lib/simulation";
 
 function useDeviceHeading(enabled) {
   const [heading, setHeading] = useState(null);
@@ -13,6 +13,7 @@ function useDeviceHeading(enabled) {
       return undefined;
     }
 
+    let cancelled = false;
     const handler = (event) => {
       const nextHeading =
         typeof event.webkitCompassHeading === "number"
@@ -21,21 +22,34 @@ function useDeviceHeading(enabled) {
             ? norm360(360 - event.alpha)
             : null;
 
-      if (nextHeading !== null) {
+      if (!cancelled && nextHeading !== null) {
         setHeading(nextHeading);
       }
     };
 
-    window.DeviceOrientationEvent?.requestPermission?.()
-      .then((permission) => {
-        if (permission === "granted") {
-          window.addEventListener("deviceorientation", handler, true);
-        }
-      })
-      .catch(() => {});
+    const addListener = () => {
+      if (!cancelled) {
+        window.addEventListener("deviceorientation", handler, true);
+      }
+    };
 
-    window.addEventListener("deviceorientation", handler, true);
-    return () => window.removeEventListener("deviceorientation", handler, true);
+    const requestPermission = window.DeviceOrientationEvent?.requestPermission;
+    if (typeof requestPermission === "function") {
+      requestPermission.call(window.DeviceOrientationEvent)
+        .then((permission) => {
+          if (permission === "granted") {
+            addListener();
+          }
+        })
+        .catch(() => {});
+    } else {
+      addListener();
+    }
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("deviceorientation", handler, true);
+    };
   }, [enabled]);
 
   return { heading, supported };
@@ -48,9 +62,6 @@ function createNextState(currentState, key, value, heading, useCompass) {
 
   const nextValue = typeof value === "function" ? value(currentState[key]) : value;
   const nextState = { ...currentState, [key]: nextValue };
-  const nextForwardBearing = useCompass && heading !== null ? Math.round(heading) : nextState.forwardBearing;
-
-  nextState.forwardBearing = nextForwardBearing;
 
   if (key === "widthUnits" || key === "depthUnits" || key === "antenna") {
     nextState.antenna = {
@@ -59,11 +70,15 @@ function createNextState(currentState, key, value, heading, useCompass) {
     };
   }
 
+  if (useCompass && heading !== null) {
+    nextState.forwardBearing = Math.round(heading);
+  }
+
   return nextState;
 }
 
 export default function App() {
-  const [sim, setSim] = useState(DEFAULTS);
+  const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
   const { heading, supported } = useDeviceHeading(useCompass);
 
