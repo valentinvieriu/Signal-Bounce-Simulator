@@ -97,6 +97,14 @@ export default function App() {
     setSim((currentState) => createNextState(currentState, key, value, heading, useCompass));
   };
 
+  const handleUseCompassChange = (nextValue) => {
+    if (!nextValue && heading !== null) {
+      setSim((currentState) => ({ ...currentState, antennaDirection: Math.round(heading) }));
+    }
+
+    setUseCompass(nextValue);
+  };
+
   return (
     <div className="min-h-screen bg-[#ececec] font-sans text-zinc-950">
       <div className="mx-auto max-w-[1500px] p-4 md:p-6 xl:p-8">
@@ -112,7 +120,7 @@ export default function App() {
             sim={hydratedSim}
             updateSim={updateSim}
             useCompass={useCompass}
-            setUseCompass={setUseCompass}
+            setUseCompass={handleUseCompassChange}
             heading={heading}
             supported={supported}
             telemetry={telemetry}

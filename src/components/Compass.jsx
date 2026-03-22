@@ -96,7 +96,12 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
           <svg
             ref={dialRef}
             viewBox={`0 0 ${size} ${size}`}
-            className="h-[330px] w-[330px] touch-none select-none"
+            className={`h-[330px] w-[330px] touch-none select-none ${useCompass ? "cursor-pointer" : ""}`}
+            onClick={() => {
+              if (useCompass && !drag) {
+                setUseCompass(false);
+              }
+            }}
             onPointerMove={(event) => {
               if (!drag || event.pointerId !== drag.pointerId) return;
 
@@ -244,7 +249,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-zinc-900">Use gyroscope to steer beam</p>
-              <p className="mt-1 text-xs text-zinc-500">Keep north and target placement fixed, then point your phone to move the blue antenna dot.</p>
+              <p className="mt-1 text-xs text-zinc-500">Keep north and target placement fixed, then point your phone to move the blue antenna dot. Tap the radar to freeze the current angle.</p>
             </div>
             <Switch checked={useCompass} onCheckedChange={setUseCompass} />
           </div>
