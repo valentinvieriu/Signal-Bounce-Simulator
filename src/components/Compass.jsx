@@ -1,7 +1,23 @@
 import { useRef, useState } from "react";
 
-import { COMPASS_MARKERS, degToRad, norm360, radToDeg } from "../lib/simulation";
+import { COMPASS_MARKERS, degToRad, getAlignmentPalette, norm360, radToDeg } from "../lib/simulation";
 import { Button, Label, NumberField, SliderRow, Switch } from "./ui";
+
+function getArcPoint(radius, arcRadius, bearing) {
+  return {
+    x: radius + Math.cos(degToRad(bearing - 90)) * arcRadius,
+    y: radius + Math.sin(degToRad(bearing - 90)) * arcRadius,
+  };
+}
+
+function describeArc(radius, arcRadius, startBearing, endBearing) {
+  const sweep = (endBearing - startBearing + 360) % 360;
+  const start = getArcPoint(radius, arcRadius, startBearing);
+  const end = getArcPoint(radius, arcRadius, endBearing);
+  const largeArcFlag = sweep > 180 ? 1 : 0;
+
+  return `M ${start.x} ${start.y} A ${arcRadius} ${arcRadius} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`;
+}
 
 function CompassMarkerCard({ label, value, color, description }) {
   return (
@@ -18,7 +34,7 @@ function CompassMarkerCard({ label, value, color, description }) {
 
 export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported, telemetry, gyroMode }) {
   const { distanceKm, forwardBearing, targetBearing, antennaDirection } = sim;
-  const { alignmentError, isAligned } = telemetry;
+  const { alignment, alignmentError, isAligned } = telemetry;
   const size = 330;
   const radius = size / 2;
   const dialRef = useRef(null);
@@ -61,16 +77,16 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   // Draw the shortest arc from target bearing to antenna bearing so the radar shows how far apart they are.
   const sweep = sweepDelta;
   const sweepRadius = radius - 98;
-  const largeArcFlag = Math.abs(sweep) > 180 ? 1 : 0;
   const sweepDirection = sweep >= 0 ? 1 : 0;
-  const sweepStart = {
-    x: radius + Math.cos(degToRad(targetSweepStart - 90)) * sweepRadius,
-    y: radius + Math.sin(degToRad(targetSweepStart - 90)) * sweepRadius,
-  };
-  const sweepEnd = {
-    x: radius + Math.cos(degToRad(targetSweepStart + sweep - 90)) * sweepRadius,
-    y: radius + Math.sin(degToRad(targetSweepStart + sweep - 90)) * sweepRadius,
-  };
+  const sweepStart = getArcPoint(radius, sweepRadius, targetSweepStart);
+  const sweepEnd = getArcPoint(radius, sweepRadius, targetSweepStart + sweep);
+  const targetLocalBearing = norm360(targetBearing - forwardBearing);
+  const sweepAnchor = getArcPoint(radius, sweepRadius, targetLocalBearing);
+  const featherArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.featherThreshold, targetLocalBearing + alignment.featherThreshold);
+  const coneArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.halfSpread, targetLocalBearing + alignment.halfSpread);
+  const lockArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.lockThreshold, targetLocalBearing + alignment.lockThreshold);
+  const useLockPulse = alignmentError !== null && alignmentError < Math.max(0.75, alignment.lockThreshold * 0.35);
+  const alignmentPalette = getAlignmentPalette(alignment.state);
 
   return (
     <div className="flex flex-col rounded-[2rem] border border-zinc-200 bg-white/90 shadow-sm">
@@ -203,13 +219,68 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               pointerEvents="none"
             />
             <path
-              d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${largeArcFlag} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
+              d={featherArcPath}
               fill="none"
-              stroke={isAligned ? "#16a34a" : "rgba(37,99,235,0.45)"}
+              stroke="rgba(245,158,11,0.12)"
+              strokeWidth="26"
+              strokeLinecap="round"
+              pointerEvents="none"
+            />
+            <path
+              d={coneArcPath}
+              fill="none"
+              stroke={alignmentPalette.glow}
+              strokeWidth="18"
+              strokeLinecap="round"
+              pointerEvents="none"
+            />
+            <path
+              d={lockArcPath}
+              fill="none"
+              stroke="rgba(22,163,74,0.18)"
               strokeWidth="10"
               strokeLinecap="round"
               pointerEvents="none"
             />
+            {useLockPulse ? (
+              <>
+                <circle
+                  cx={sweepAnchor.x}
+                  cy={sweepAnchor.y}
+                  r={10 + alignment.score * 2}
+                  fill={alignmentPalette.glow}
+                  pointerEvents="none"
+                />
+                <circle
+                  cx={sweepAnchor.x}
+                  cy={sweepAnchor.y}
+                  r={4 + alignment.score * 1.5}
+                  fill={alignmentPalette.stroke}
+                  pointerEvents="none"
+                />
+              </>
+            ) : (
+              <>
+                <path
+                  d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${Math.abs(sweep) > 180 ? 1 : 0} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
+                  fill="none"
+                  stroke={alignmentPalette.glow}
+                  strokeWidth={14 + alignment.score * 5}
+                  strokeLinecap="round"
+                  opacity={0.8}
+                  pointerEvents="none"
+                />
+                <path
+                  d={`M ${sweepStart.x} ${sweepStart.y} A ${sweepRadius} ${sweepRadius} 0 ${Math.abs(sweep) > 180 ? 1 : 0} ${sweepDirection} ${sweepEnd.x} ${sweepEnd.y}`}
+                  fill="none"
+                  stroke={alignmentPalette.stroke}
+                  strokeWidth={7 + alignment.score * 3}
+                  strokeLinecap="round"
+                  opacity={alignment.state === "missed" ? 0.7 : 1}
+                  pointerEvents="none"
+                />
+              </>
+            )}
 
             {draggableHandles.map((handle) => (
               <g key={handle.id}>
@@ -238,23 +309,37 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
         </div>
 
         <div className="mt-2 grid gap-4 rounded-3xl border border-zinc-100 bg-zinc-50 p-4">
-          <div className={`rounded-2xl border px-4 py-3 ${isAligned ? "border-emerald-200 bg-emerald-50" : "border-zinc-200 bg-white"}`}>
+          <div className={`rounded-2xl border px-4 py-3 ${alignmentPalette.panelClassName}`}>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className={`text-sm font-semibold ${isAligned ? "text-emerald-900" : "text-zinc-900"}`}>
-                  {isAligned ? "Radar aligned" : "Radar alignment"}
+                <p className={`text-sm font-semibold ${alignmentPalette.textClassName}`}>
+                  {isAligned ? "Radar aligned" : "Radar convergence"}
                 </p>
-                <p className={`mt-1 text-xs ${isAligned ? "text-emerald-700" : "text-zinc-500"}`}>
+                <p className={`mt-1 text-xs ${alignmentPalette.subtextClassName}`}>
                   {isAligned
-                    ? "Beam exit and target bearing are matched. The sweep turns green when you are on target."
+                    ? "The main exit ray is inside the lock window. Keep the antenna here for a stable handoff."
                     : alignmentError !== null
-                      ? `Point the blue antenna dot until the sweep turns green. Current error: ${alignmentError.toFixed(1)}°.`
+                      ? `The target corridor now has a feathered edge. As the antenna enters it, the sweep thickens and extra guide beams appear. Current error: ${alignmentError.toFixed(1)}°.`
                       : "No exit path yet. Adjust the beam or wall openings until the radar can see the target."}
                 </p>
               </div>
-              <div className={`rounded-full px-3 py-1 text-xs font-semibold ${isAligned ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-700"}`}>
-                {isAligned ? "Matched" : alignmentError !== null ? `${alignmentError.toFixed(1)}° off` : "No exit"}
+              <div className={`rounded-full px-3 py-1 text-xs font-semibold ${alignmentPalette.badgeClassName}`}>
+                {alignmentError !== null ? `${Math.round(alignment.score * 100)}% ${alignment.label.toLowerCase()}` : "No exit"}
               </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Lock window</p>
+              <p className="mt-1 text-lg font-semibold text-zinc-900">±{alignment.lockThreshold.toFixed(1)}°</p>
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Cone body</p>
+              <p className="mt-1 text-lg font-semibold text-zinc-900">±{alignment.halfSpread.toFixed(1)}°</p>
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Feather edge</p>
+              <p className="mt-1 text-lg font-semibold text-zinc-900">±{alignment.featherThreshold.toFixed(1)}°</p>
             </div>
           </div>
           <div className="flex items-center justify-between gap-3">

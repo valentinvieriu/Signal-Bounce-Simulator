@@ -6,6 +6,7 @@ import {
   MAP_TIPS,
   clamp,
   degToRad,
+  getAlignmentPalette,
   norm360,
   radToDeg,
 } from "../lib/simulation";
@@ -35,6 +36,26 @@ function getWallSegments({ mapX, mapY, mapW, mapH }) {
     { key: "bottom", x1: mapX, y1: mapY + mapH, x2: mapX + mapW, y2: mapY + mapH, fx: mapX, fy: mapY + mapH + 6, fw: mapW, fh: 40, align: "justify-center" },
     { key: "left", x1: mapX, y1: mapY, x2: mapX, y2: mapY + mapH, fx: mapX - 80, fy: mapY, fw: 80, fh: mapH, align: "justify-end pr-3" },
   ];
+}
+
+function getInteriorPoints(result) {
+  if (!result.didExit || result.points.length < 2) {
+    return result.points;
+  }
+
+  return result.points.slice(0, -1);
+}
+
+function getExteriorPoints(result) {
+  if (!result.didExit || result.points.length < 2) {
+    return [];
+  }
+
+  return result.points.slice(-2);
+}
+
+function getFirstSegmentPoints(result) {
+  return result.points.slice(0, Math.min(result.points.length, 2));
 }
 
 const MotionCircle = motion.circle;
@@ -100,12 +121,41 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gridStep = dominantDimension > 200 ? 25 : dominantDimension > 100 ? 10 : dominantDimension > 40 ? 5 : dominantDimension > 10 ? 2 : 1;
   const gridPx = (mapW / widthUnits) * gridStep;
 
-  const { escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
-  const { main, left, right } = rays;
+  const { alignment, escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
+  const { main, left, right, guide } = rays;
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
 
-  const createPath = (result) => result.points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ");
+  const createPathFromPoints = (points) => (
+    points.length >= 2
+      ? points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ")
+      : ""
+  );
+  const createPath = (result, segment = "full") => {
+    const points =
+      segment === "interior"
+        ? getInteriorPoints(result)
+        : segment === "exterior"
+          ? getExteriorPoints(result)
+          : result.points;
+    return createPathFromPoints(points);
+  };
+  const createConePath = () => {
+    const leftSegment = getFirstSegmentPoints(left);
+    const rightSegment = getFirstSegmentPoints(right);
+
+    if (leftSegment.length < 2 || rightSegment.length < 2) {
+      return "";
+    }
+
+    return [
+      `M ${scaleX(leftSegment[0].x)} ${scaleY(leftSegment[0].y)}`,
+      `L ${scaleX(leftSegment[1].x)} ${scaleY(leftSegment[1].y)}`,
+      `L ${scaleX(rightSegment[1].x)} ${scaleY(rightSegment[1].y)}`,
+      "Z",
+    ].join(" ");
+  };
+  const alignmentPalette = getAlignmentPalette(alignment.state);
 
   const summaryCards = [
     { label: "Building size", value: `${widthUnits.toFixed(1)} m × ${depthUnits.toFixed(1)} m` },
@@ -114,6 +164,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
     { label: "Path length", value: `${(main.pathDistanceUnits / 1000).toFixed(2)} km` },
     { label: "Reflections", value: String(main.reflectionsUsed) },
     { label: "Alignment error", value: alignmentError !== null ? `${alignmentError.toFixed(1)}°` : "—" },
+    { label: "Alignment potential", value: `${Math.round(alignment.score * 100)}%`, accent: alignment.score >= 0.7 },
   ];
 
   return (
@@ -125,9 +176,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
             <p className="mt-1 text-sm font-normal text-zinc-500">Drag to move or rotate antenna. Choose pass/reflect for walls.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={isAligned ? "border-transparent bg-emerald-100 text-emerald-800" : "border-transparent bg-zinc-100 text-zinc-700"}>
-              {isAligned ? "Bearing matched" : main.didExit ? "Exited but off target" : "No exit"}
-            </Badge>
+            <Badge className={`border-transparent ${alignmentPalette.badgeClassName}`}>{main.didExit ? alignment.label : "No exit"}</Badge>
             <Badge className="border-transparent bg-zinc-100 text-zinc-700">{main.didExit ? `Exit ${main.finalTrueBearing.toFixed(1)}°` : "Contained"}</Badge>
           </div>
         </div>
@@ -204,9 +253,34 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               strokeDasharray="8 8"
               opacity="0.65"
             />
-            <path d={createPath(left)} fill="none" stroke={isAligned ? "#86efac" : "#93c5fd"} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-            <path d={createPath(right)} fill="none" stroke={isAligned ? "#86efac" : "#93c5fd"} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-            <path d={createPath(main)} fill="none" stroke={isAligned ? "#16a34a" : "#2563eb"} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.18 + alignment.approachScore * 0.18} />
+            <path d={createPathFromPoints(getFirstSegmentPoints(left))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
+            <path d={createPathFromPoints(getFirstSegmentPoints(right))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
+            {guide.map((result, index) => (
+              <path
+                key={`guide-${index}`}
+                d={createPathFromPoints(getFirstSegmentPoints(result))}
+                fill="none"
+                stroke={alignmentPalette.guide}
+                strokeWidth={1.1 + alignment.score * 0.8}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.16 + alignment.score * 0.2}
+              />
+            ))}
+            <path d={createPath(main, "interior")} fill="none" stroke={alignmentPalette.main} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+            {main.didExit && (
+              <path
+                d={createPath(main, "exterior")}
+                fill="none"
+                stroke={alignmentPalette.main}
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.38"
+                strokeDasharray="8 8"
+              />
+            )}
 
             {wallSegments.map((wall) => (
               <g key={wall.key}>
@@ -332,6 +406,9 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
             {summaryCards.map((card) => (
               <StatCard key={card.label} label={card.label} value={card.value} accent={card.accent} />
             ))}
+            <InfoCard icon={Waves} iconClassName="text-blue-500">
+              Target lock now uses three zones: a green lock core, the main cone body, and a feathered entry band that starts reacting before full alignment.
+            </InfoCard>
             {MAP_TIPS.map((tip) => (
               <InfoCard key={tip.label} icon={tip.icon === "move" ? Move : Waves} iconClassName={tip.tone}>
                 {tip.text}

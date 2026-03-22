@@ -7,9 +7,11 @@ import {
   shortestDelta,
   distance,
   createDefaultSimulationState,
+  getAlignmentProfile,
   getResetCompassState,
   getResetMapState,
   getSimulationTelemetry,
+  smoothstep,
   traceRay,
   DEFAULTS,
 } from "./simulation";
@@ -76,6 +78,25 @@ describe("distance", () => {
   });
   it("returns 0 for same point", () => {
     expect(distance({ x: 7, y: 3 }, { x: 7, y: 3 })).toBe(0);
+  });
+});
+
+describe("smoothstep", () => {
+  it("returns 0 before the lower edge", () => {
+    expect(smoothstep(10, 20, 5)).toBe(0);
+  });
+
+  it("returns 1 after the upper edge", () => {
+    expect(smoothstep(10, 20, 25)).toBe(1);
+  });
+
+  it("eases values inside the range", () => {
+    expect(smoothstep(0, 10, 5)).toBeCloseTo(0.5);
+  });
+
+  it("handles degenerate ranges when both edges are the same", () => {
+    expect(smoothstep(10, 10, 9)).toBe(0);
+    expect(smoothstep(10, 10, 10)).toBe(1);
   });
 });
 
@@ -258,6 +279,8 @@ describe("getSimulationTelemetry", () => {
     expect(telemetry.rays.main.finalTrueBearing).toBeCloseTo(0);
     expect(telemetry.alignmentError).toBeCloseTo(0);
     expect(telemetry.isAligned).toBe(true);
+    expect(telemetry.alignment.state).toBe("locked");
+    expect(telemetry.alignment.score).toBeCloseTo(1);
   });
 
   it("returns non-aligned telemetry when the exit bearing misses the target", () => {
@@ -274,5 +297,104 @@ describe("getSimulationTelemetry", () => {
     expect(telemetry.rays.main.didExit).toBe(true);
     expect(telemetry.alignmentError).toBeCloseTo(25);
     expect(telemetry.isAligned).toBe(false);
+    expect(telemetry.alignment.state).toBe("missed");
+  });
+
+  it("keeps the legacy 2° aligned threshold even if the cone lock zone is wider", () => {
+    const telemetry = getSimulationTelemetry({
+      ...createDefaultSimulationState(),
+      forwardBearing: 0,
+      antennaDirection: 0,
+      targetBearing: 4,
+      beamSpread: 120,
+      wallBounces: 0,
+      surfaces: { top: "pass", right: "reflect", bottom: "reflect", left: "reflect" },
+    });
+
+    expect(telemetry.alignment.state).toBe("converging");
+    expect(telemetry.isAligned).toBe(false);
+  });
+});
+
+describe("getAlignmentProfile", () => {
+  it("returns blocked state when there is no exit", () => {
+    const profile = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: false,
+      signedError: null,
+    });
+
+    expect(profile.state).toBe("blocked");
+    expect(profile.score).toBe(0);
+    expect(profile.visualGuideOffsets).toEqual([]);
+  });
+
+  it("marks exact matches as locked", () => {
+    const profile = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: 0,
+    });
+
+    expect(profile.state).toBe("locked");
+    expect(profile.score).toBeCloseTo(1);
+    expect(profile.visualGuideOffsets.length).toBeGreaterThan(0);
+  });
+
+  it("keeps rays converging inside the cone", () => {
+    const profile = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: 18,
+    });
+
+    expect(profile.state).toBe("converging");
+    expect(profile.score).toBeGreaterThan(0);
+  });
+
+  it("uses a feather zone before fully missing the cone", () => {
+    const profile = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: 36,
+    });
+
+    expect(profile.state).toBe("fringe");
+    expect(profile.approachScore).toBeGreaterThan(0);
+  });
+
+  it("keeps the same scoring and guide layout from either side of approach", () => {
+    const leftApproach = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: -18,
+    });
+    const rightApproach = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: 18,
+    });
+
+    expect(leftApproach.state).toBe(rightApproach.state);
+    expect(leftApproach.score).toBeCloseTo(rightApproach.score);
+    expect(leftApproach.visualGuideOffsets).toEqual(rightApproach.visualGuideOffsets);
+  });
+
+  it("adjusts guide offset counts across score bands", () => {
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 0 }).visualGuideOffsets).toHaveLength(4);
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 8 }).visualGuideOffsets).toHaveLength(3);
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 18 }).visualGuideOffsets).toHaveLength(2);
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 60 }).visualGuideOffsets).toHaveLength(0);
+  });
+
+  it("falls back to missed when well outside the cone", () => {
+    const profile = getAlignmentProfile({
+      beamSpread: 60,
+      didExit: true,
+      signedError: 60,
+    });
+
+    expect(profile.state).toBe("missed");
+    expect(profile.score).toBe(0);
   });
 });
