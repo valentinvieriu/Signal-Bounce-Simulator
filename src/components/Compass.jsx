@@ -79,7 +79,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
           <svg
             ref={dialRef}
             viewBox={`0 0 ${size} ${size}`}
-            className="h-[330px] w-[330px] select-none"
+            className="h-[330px] w-[330px] touch-none select-none"
             onPointerMove={(event) => {
               if (!drag || event.pointerId !== drag.pointerId) return;
 
@@ -179,9 +179,9 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
                 <circle
                   cx={handle.x}
                   cy={handle.y}
-                  r="28"
+                  r="18"
                   fill="transparent"
-                  className={handle.lock ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing touch-none"}
+                  className={handle.lock ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing"}
                   onPointerDown={(event) => {
                     if (handle.lock) return;
                     event.stopPropagation();

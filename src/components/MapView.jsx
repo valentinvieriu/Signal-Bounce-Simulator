@@ -48,10 +48,14 @@ export default function MapView({ sim, updateSim }) {
   const paddingX = 90;
   const paddingY = 65;
   const mapRef = useRef(null);
-  const [drag, setDrag] = useState(null); // { mode: "antenna"|"direction", pointerId }
+  const [drag, setDrag] = useState(null); // { mode: "antenna"|"direction", pointerId, pointerType }
 
   const startDrag = (mode, event) => {
-    setDrag({ mode, pointerId: event.pointerId });
+    if (event.pointerType !== "mouse") {
+      event.preventDefault();
+    }
+
+    setDrag({ mode, pointerId: event.pointerId, pointerType: event.pointerType });
     mapRef.current?.setPointerCapture(event.pointerId);
   };
 
@@ -152,7 +156,7 @@ export default function MapView({ sim, updateSim }) {
       </div>
 
       <div className="space-y-5 p-6 pt-0">
-        <div className="relative overflow-hidden rounded-[1.75rem] border border-zinc-200 bg-[#f7f7f7] p-2">
+        <div className="relative overflow-hidden rounded-[1.75rem] border border-zinc-200 bg-[#f7f7f7] p-2" style={{ touchAction: "pan-y pinch-zoom" }}>
           <svg
             ref={mapRef}
             viewBox={`0 0 ${viewWidth} ${viewDepth}`}
@@ -161,13 +165,20 @@ export default function MapView({ sim, updateSim }) {
               const t = event.target;
               const isSvgElement = t instanceof SVGElement;
               const isHandle = t.getAttribute?.("data-handle") === "true";
-              if (event.pointerType === "mouse" && isSvgElement && !isHandle) {
+              const isMapControl = typeof t.closest === "function" && t.closest("[data-map-control='true']");
+
+              if (event.pointerType === "mouse" && isSvgElement && !isHandle && !isMapControl) {
                 startDrag("antenna", event);
                 updateSim("antenna", fromScreen(event.clientX, event.clientY));
               }
             }}
             onPointerMove={(event) => {
               if (!drag || event.pointerId !== drag.pointerId) return;
+
+              if (drag.pointerType !== "mouse") {
+                event.preventDefault();
+              }
+
               if (drag.mode === "antenna") {
                 updateSim("antenna", fromScreen(event.clientX, event.clientY));
               } else if (drag.mode === "direction") {
@@ -176,7 +187,7 @@ export default function MapView({ sim, updateSim }) {
             }}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
-            onLostPointerCapture={endDrag}
+            onLostPointerCapture={() => setDrag(null)}
           >
             <defs>
               <pattern id="grid" x={mapX} y={mapY} width={gridPx} height={gridPx} patternUnits="userSpaceOnUse">
@@ -232,7 +243,7 @@ export default function MapView({ sim, updateSim }) {
                   strokeLinecap="round"
                 />
                 <foreignObject x={wall.fx} y={wall.fy} width={wall.fw} height={wall.fh} style={{ overflow: "visible" }}>
-                  <div className={`pointer-events-none flex h-full w-full items-center ${wall.align}`}>
+                  <div data-map-control="true" className={`pointer-events-none flex h-full w-full items-center ${wall.align}`}>
                     <WallPassToggle
                       checked={surfaces[wall.key] === "pass"}
                       onChange={(checked) => updateSim("surfaces", { ...surfaces, [wall.key]: checked ? "pass" : "reflect" })}
@@ -256,7 +267,7 @@ export default function MapView({ sim, updateSim }) {
               cy={scaleY(antenna.y)}
               r="36"
               fill="transparent"
-              className="cursor-grab active:cursor-grabbing touch-none"
+              className="cursor-grab active:cursor-grabbing"
               onPointerDown={(event) => {
                 event.stopPropagation();
                 startDrag("antenna", event);
@@ -269,7 +280,7 @@ export default function MapView({ sim, updateSim }) {
               cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 50}
               r="36"
               fill="transparent"
-              className="cursor-grab active:cursor-grabbing touch-none"
+              className="cursor-grab active:cursor-grabbing"
               onPointerDown={(event) => {
                 event.stopPropagation();
                 startDrag("direction", event);
