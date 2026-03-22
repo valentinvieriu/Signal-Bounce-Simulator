@@ -1,0 +1,84 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pages-deploy-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+        env:
+          VITE_BASE_PATH: /Signal-Bounce-Simulator/pr-${{ github.event.pull_request.number }}/
+
+      - uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: dist
+          target-folder: pr-${{ github.event.pull_request.number }}
+          clean: true
+
+      - name: Post or update preview comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PREVIEW_URL="https://valentinvieriu.github.io/Signal-Bounce-Simulator/pr-${PR_NUMBER}/"
+          COMMENT_MARKER="<!-- preview-comment -->"
+          COMMENT_BODY="${COMMENT_MARKER}
+          ## Preview Deployment
+
+          ${PREVIEW_URL}
+
+          _Built from ${{ github.event.pull_request.head.sha }}_"
+
+          # Find existing preview comment by hidden marker
+          EXISTING_COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${COMMENT_MARKER}\")) | .id" | head -1)
+
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${EXISTING_COMMENT_ID}" \
+              --method PATCH --field body="${COMMENT_BODY}"
+          else
+            gh pr comment "$PR_NUMBER" --body "${COMMENT_BODY}"
+          fi
+
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Remove preview folder
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -d "pr-${PR_NUMBER}" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git rm -rf "pr-${PR_NUMBER}"
+            git commit -m "Remove preview for PR #${PR_NUMBER}"
+            git push origin gh-pages
+          else
+            echo "Preview folder pr-${PR_NUMBER} does not exist, skipping cleanup"
+          fi
