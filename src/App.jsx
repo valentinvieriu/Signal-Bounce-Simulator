@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
-import { clamp, createDefaultSimulationState, getResetMapState, norm360 } from "./lib/simulation";
+import {
+  clamp,
+  createDefaultSimulationState,
+  getResetMapState,
+  getSimulationTelemetry,
+  norm360,
+} from "./lib/simulation";
 
 function useDeviceHeading(enabled) {
   const [heading, setHeading] = useState(null);
@@ -71,7 +77,12 @@ function createNextState(currentState, key, value, heading, useCompass) {
   }
 
   if (useCompass && heading !== null) {
-    nextState.forwardBearing = Math.round(heading);
+    const gyroMode = nextState.gyroMode ?? "north";
+    if (gyroMode === "antenna") {
+      nextState.antennaDirection = Math.round(heading);
+    } else {
+      nextState.forwardBearing = Math.round(heading);
+    }
   }
 
   return nextState;
@@ -81,10 +92,17 @@ export default function App() {
   const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
   const { heading, supported } = useDeviceHeading(useCompass);
+  const gyroMode = sim.gyroMode ?? "north";
 
   const hydratedSim = useCompass && heading !== null
-    ? { ...sim, forwardBearing: Math.round(heading) }
+    ? {
+        ...sim,
+        ...(gyroMode === "antenna"
+          ? { antennaDirection: Math.round(heading) }
+          : { forwardBearing: Math.round(heading) }),
+      }
     : sim;
+  const telemetry = getSimulationTelemetry(hydratedSim);
 
   const updateSim = (key, value) => {
     setSim((currentState) => createNextState(currentState, key, value, heading, useCompass));
@@ -108,8 +126,16 @@ export default function App() {
             setUseCompass={setUseCompass}
             heading={heading}
             supported={supported}
+            telemetry={telemetry}
+            gyroMode={gyroMode}
           />
-          <MapView sim={hydratedSim} updateSim={updateSim} />
+          <MapView
+            sim={hydratedSim}
+            updateSim={updateSim}
+            useCompass={useCompass}
+            telemetry={telemetry}
+            gyroMode={gyroMode}
+          />
         </div>
       </div>
     </div>

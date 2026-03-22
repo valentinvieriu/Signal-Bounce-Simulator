@@ -6,10 +6,9 @@ import {
   MAP_TIPS,
   clamp,
   degToRad,
+  getSimulationTelemetry,
   norm360,
   radToDeg,
-  shortestDelta,
-  traceRay,
 } from "../lib/simulation";
 import { Badge, Button, InfoCard, NumberField, SliderRow, StatCard, WallPassToggle } from "./ui";
 
@@ -41,8 +40,8 @@ function getWallSegments({ mapX, mapY, mapW, mapH }) {
 
 const MotionCircle = motion.circle;
 
-export default function MapView({ sim, updateSim }) {
-  const { widthUnits, depthUnits, beamSpread, wallBounces, forwardBearing, targetBearing, antennaDirection, distanceKm, antenna, surfaces } = sim;
+export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode }) {
+  const { widthUnits, depthUnits, beamSpread, wallBounces, forwardBearing, targetBearing, antennaDirection, antenna, surfaces } = sim;
   const viewWidth = 700;
   const viewDepth = 500;
   const paddingX = 90;
@@ -98,33 +97,15 @@ export default function MapView({ sim, updateSim }) {
     return norm360(radToDeg(Math.atan2(point.x - scaleX(antenna.x), scaleY(antenna.y) - point.y)));
   };
 
-  const localAntennaDirection = norm360(antennaDirection - forwardBearing);
-  const escapeDistance = Math.max(500, Math.min(distanceKm * 1000, 20000));
   const dominantDimension = Math.max(widthUnits, depthUnits);
   const gridStep = dominantDimension > 200 ? 25 : dominantDimension > 100 ? 10 : dominantDimension > 40 ? 5 : dominantDimension > 10 ? 2 : 1;
   const gridPx = (mapW / widthUnits) * gridStep;
 
-  const rayResults = useMemo(() => {
-    const sharedParams = {
-      origin: antenna,
-      width: widthUnits,
-      depth: depthUnits,
-      maxReflections: wallBounces,
-      escapeDistanceUnits: escapeDistance,
-      forwardBearingDeg: forwardBearing,
-      surfaces,
-    };
-
-    return {
-      main: traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection }),
-      left: traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 }),
-      right: traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 }),
-    };
-  }, [antenna, beamSpread, depthUnits, escapeDistance, forwardBearing, localAntennaDirection, surfaces, wallBounces, widthUnits]);
-
-  const { main, left, right } = rayResults;
-  const alignmentError = main.didExit ? Math.abs(shortestDelta(main.finalTrueBearing, targetBearing)) : null;
-  const isAligned = main.didExit && alignmentError !== null && alignmentError <= 2;
+  const fallbackTelemetry = useMemo(() => getSimulationTelemetry(sim), [sim]);
+  const activeTelemetry = telemetry ?? fallbackTelemetry;
+  const { escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = activeTelemetry;
+  const { main, left, right } = rays;
+  const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
 
   const createPath = (result) => result.points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ");
@@ -280,8 +261,9 @@ export default function MapView({ sim, updateSim }) {
               cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 50}
               r="36"
               fill="transparent"
-              className="cursor-grab active:cursor-grabbing"
+              className={gyroControlsAntenna ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing"}
               onPointerDown={(event) => {
+                if (gyroControlsAntenna) return;
                 event.stopPropagation();
                 startDrag("direction", event);
                 updateSim("antennaDirection", norm360(screenToDirection(event.clientX, event.clientY) + forwardBearing));
@@ -307,7 +289,14 @@ export default function MapView({ sim, updateSim }) {
 
         <div className="grid gap-5 rounded-3xl border border-zinc-100 bg-zinc-50 p-4 md:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-5">
-            <SliderRow label="Antenna bearing" value={antennaDirection} onChange={(value) => updateSim("antennaDirection", value)} min={0} max={359} />
+            <SliderRow
+              label="Antenna bearing"
+              value={antennaDirection}
+              onChange={(value) => updateSim("antennaDirection", value)}
+              min={0}
+              max={359}
+              disabled={gyroControlsAntenna}
+            />
             <SliderRow label="Beam spread" value={beamSpread} onChange={(value) => updateSim("beamSpread", value)} min={2} max={180} />
             <SliderRow label="Wall bounces" value={wallBounces} onChange={(value) => updateSim("wallBounces", value)} min={0} max={8} unit="" />
             <SliderRow label="Courtyard width" value={widthUnits} onChange={(value) => updateSim("widthUnits", value)} min={10} max={500} unit="m" />

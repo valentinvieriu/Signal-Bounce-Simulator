@@ -6,6 +6,7 @@ export const shortestDelta = (from, to) => ((norm360(to) - norm360(from) + 540) 
 export const distance = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 
 export const DEFAULTS = {
+  gyroMode: "north",
   distanceKm: 5.32,
   targetBearing: 206,
   forwardBearing: 188,
@@ -29,7 +30,7 @@ export const MAP_TIPS = [
     label: "Drag controls",
     icon: "move",
     tone: "text-[#bf8d8c]",
-    text: "Drag center blue dot to move antenna. Drag outer blue dot to change direction.",
+    text: "Drag center blue dot to move antenna. Drag outer blue dot to change direction unless the gyro is currently driving antenna aim.",
   },
   {
     label: "Wall behavior",
@@ -52,6 +53,7 @@ export function getResetMapState(currentState) {
 
   return {
     ...currentState,
+    gyroMode: defaults.gyroMode,
     antennaDirection: defaults.antennaDirection,
     beamSpread: defaults.beamSpread,
     wallBounces: defaults.wallBounces,
@@ -59,6 +61,47 @@ export function getResetMapState(currentState) {
     depthUnits: defaults.depthUnits,
     antenna: defaults.antenna,
     surfaces: defaults.surfaces,
+  };
+}
+
+export function getSimulationTelemetry(sim) {
+  const {
+    antenna,
+    antennaDirection,
+    beamSpread,
+    depthUnits,
+    distanceKm,
+    forwardBearing,
+    surfaces,
+    targetBearing,
+    wallBounces,
+    widthUnits,
+  } = sim;
+
+  const localAntennaDirection = norm360(antennaDirection - forwardBearing);
+  const escapeDistance = Math.max(500, Math.min(distanceKm * 1000, 20000));
+  const sharedParams = {
+    origin: antenna,
+    width: widthUnits,
+    depth: depthUnits,
+    maxReflections: wallBounces,
+    escapeDistanceUnits: escapeDistance,
+    forwardBearingDeg: forwardBearing,
+    surfaces,
+  };
+
+  const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
+  const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
+  const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
+  const alignmentError = main.didExit ? Math.abs(shortestDelta(main.finalTrueBearing, targetBearing)) : null;
+  const isAligned = main.didExit && alignmentError !== null && alignmentError <= 2;
+
+  return {
+    escapeDistance,
+    localAntennaDirection,
+    rays: { main, left, right },
+    alignmentError,
+    isAligned,
   };
 }
 
