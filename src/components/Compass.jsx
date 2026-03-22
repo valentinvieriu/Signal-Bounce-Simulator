@@ -21,7 +21,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const size = 330;
   const radius = size / 2;
   const dialRef = useRef(null);
-  const [dragMode, setDragMode] = useState(null);
+  const [drag, setDrag] = useState(null); // { mode, pointerId }
 
   const pointToAngle = (clientX, clientY) => {
     const rect = dialRef.current?.getBoundingClientRect();
@@ -79,28 +79,34 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
           <svg
             ref={dialRef}
             viewBox={`0 0 ${size} ${size}`}
-            className="h-[330px] w-[330px] touch-none select-none"
+            className="h-[330px] w-[330px] select-none"
             onPointerMove={(event) => {
-              if (!dragMode) {
-                return;
-              }
+              if (!drag || event.pointerId !== drag.pointerId) return;
 
               const angle = pointToAngle(event.clientX, event.clientY);
-              if (dragMode === "north" && !useCompass) {
+              if (drag.mode === "north" && !useCompass) {
                 updateSim("forwardBearing", norm360(-angle));
               }
-              if (dragMode === "node") {
+              if (drag.mode === "node") {
                 updateSim("targetBearing", norm360(forwardBearing + angle));
               }
-              if (dragMode === "direction") {
+              if (drag.mode === "direction") {
                 updateSim("antennaDirection", norm360(forwardBearing + angle));
               }
             }}
             onPointerUp={(event) => {
-              setDragMode(null);
-              dialRef.current?.releasePointerCapture(event.pointerId);
+              if (drag && event.pointerId === drag.pointerId) {
+                setDrag(null);
+                dialRef.current?.releasePointerCapture(event.pointerId);
+              }
             }}
-            onPointerLeave={() => setDragMode(null)}
+            onPointerCancel={(event) => {
+              if (drag && event.pointerId === drag.pointerId) {
+                setDrag(null);
+                dialRef.current?.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onLostPointerCapture={() => setDrag(null)}
           >
             <g>
               {Array.from({ length: 36 }, (_, index) => index * 10).map((step) => {
@@ -167,22 +173,23 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
 
             {draggableHandles.map((handle) => (
               <g key={handle.id}>
+                {/* Visible fill */}
+                <circle cx={handle.x} cy={handle.y} r="16" fill={handle.fill} pointerEvents="none" />
+                {/* Invisible enlarged hit target */}
                 <circle
                   cx={handle.x}
                   cy={handle.y}
-                  r="16"
-                  fill={handle.fill}
-                  stroke="transparent"
-                  className={handle.lock ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing"}
+                  r="28"
+                  fill="transparent"
+                  className={handle.lock ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing touch-none"}
                   onPointerDown={(event) => {
-                    if (handle.lock) {
-                      return;
-                    }
+                    if (handle.lock) return;
                     event.stopPropagation();
-                    setDragMode(handle.id);
+                    setDrag({ mode: handle.id, pointerId: event.pointerId });
                     dialRef.current?.setPointerCapture(event.pointerId);
                   }}
                 />
+                {/* Inner dot */}
                 <circle cx={handle.x} cy={handle.y} r="6" fill={handle.dot} pointerEvents="none" />
               </g>
             ))}

@@ -48,7 +48,19 @@ export default function MapView({ sim, updateSim }) {
   const paddingX = 90;
   const paddingY = 65;
   const mapRef = useRef(null);
-  const [dragMode, setDragMode] = useState(null);
+  const [drag, setDrag] = useState(null); // { mode: "antenna"|"direction", pointerId }
+
+  const startDrag = (mode, event) => {
+    setDrag({ mode, pointerId: event.pointerId });
+    mapRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const endDrag = (event) => {
+    if (drag && event.pointerId === drag.pointerId) {
+      setDrag(null);
+      mapRef.current?.releasePointerCapture(event.pointerId);
+    }
+  };
 
   const { mapX, mapY, mapW, mapH } = useMemo(
     () => getMapMetrics({ widthUnits, depthUnits, viewWidth, viewDepth, paddingX, paddingY }),
@@ -144,26 +156,27 @@ export default function MapView({ sim, updateSim }) {
           <svg
             ref={mapRef}
             viewBox={`0 0 ${viewWidth} ${viewDepth}`}
-            className="h-[500px] w-full touch-none"
+            className="w-full aspect-[7/5] max-h-[500px]"
             onPointerDown={(event) => {
-              if (event.target.tagName !== "circle" || event.target.getAttribute("data-handle") !== "true") {
-                setDragMode("antenna");
+              const t = event.target;
+              const isSvgElement = t instanceof SVGElement;
+              const isHandle = t.getAttribute?.("data-handle") === "true";
+              if (event.pointerType === "mouse" && isSvgElement && !isHandle) {
+                startDrag("antenna", event);
                 updateSim("antenna", fromScreen(event.clientX, event.clientY));
-                event.currentTarget.setPointerCapture(event.pointerId);
               }
             }}
             onPointerMove={(event) => {
-              if (dragMode === "antenna" && event.buttons) {
+              if (!drag || event.pointerId !== drag.pointerId) return;
+              if (drag.mode === "antenna") {
                 updateSim("antenna", fromScreen(event.clientX, event.clientY));
-              } else if (dragMode === "direction") {
+              } else if (drag.mode === "direction") {
                 updateSim("antennaDirection", norm360(screenToDirection(event.clientX, event.clientY) + forwardBearing));
               }
             }}
-            onPointerUp={(event) => {
-              setDragMode(null);
-              mapRef.current?.releasePointerCapture(event.pointerId);
-            }}
-            onPointerLeave={() => setDragMode(null)}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onLostPointerCapture={endDrag}
           >
             <defs>
               <pattern id="grid" x={mapX} y={mapY} width={gridPx} height={gridPx} patternUnits="userSpaceOnUse">
@@ -231,29 +244,49 @@ export default function MapView({ sim, updateSim }) {
             ))}
 
             <g transform={`translate(${scaleX(antenna.x)}, ${scaleY(antenna.y)})`}>
-              <circle cx="0" cy="0" r="34" fill="none" stroke="rgba(37,99,235,0.14)" strokeWidth="1.5" strokeDasharray="4 5" />
-              <MotionCircle cx="0" cy="0" r="10" fill="#2563eb" stroke="white" strokeWidth="3" animate={{ r: [10, 11.5, 10] }} transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }} />
-              <circle cx="0" cy="0" r="3.5" fill="white" />
-              <line x1="0" y1="0" x2={Math.sin(degToRad(localAntennaDirection)) * 26} y2={-Math.cos(degToRad(localAntennaDirection)) * 26} stroke="white" strokeWidth="3" strokeLinecap="round" />
+              <circle cx="0" cy="0" r="50" fill="none" stroke="rgba(37,99,235,0.14)" strokeWidth="1.5" strokeDasharray="4 5" />
+              <MotionCircle cx="0" cy="0" r="10" fill="#2563eb" stroke="white" strokeWidth="3" animate={{ r: [10, 11.5, 10] }} transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }} pointerEvents="none" />
+              <circle cx="0" cy="0" r="3.5" fill="white" pointerEvents="none" />
+              <line x1="0" y1="0" x2={Math.sin(degToRad(localAntennaDirection)) * 42} y2={-Math.cos(degToRad(localAntennaDirection)) * 42} stroke="white" strokeWidth="3" strokeLinecap="round" pointerEvents="none" />
             </g>
+            {/* Center antenna handle — invisible touch target */}
             <circle
               data-handle="true"
-              cx={scaleX(antenna.x) + Math.cos(degToRad(localAntennaDirection - 90)) * 34}
-              cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 34}
-              r="16"
-              fill="rgba(37,99,235,0.22)"
-              stroke="transparent"
-              className="cursor-grab active:cursor-grabbing"
+              cx={scaleX(antenna.x)}
+              cy={scaleY(antenna.y)}
+              r="36"
+              fill="transparent"
+              className="cursor-grab active:cursor-grabbing touch-none"
               onPointerDown={(event) => {
                 event.stopPropagation();
-                setDragMode("direction");
-                mapRef.current?.setPointerCapture(event.pointerId);
+                startDrag("antenna", event);
+              }}
+            />
+            {/* Direction handle — invisible touch target */}
+            <circle
+              data-handle="true"
+              cx={scaleX(antenna.x) + Math.cos(degToRad(localAntennaDirection - 90)) * 50}
+              cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 50}
+              r="36"
+              fill="transparent"
+              className="cursor-grab active:cursor-grabbing touch-none"
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                startDrag("direction", event);
                 updateSim("antennaDirection", norm360(screenToDirection(event.clientX, event.clientY) + forwardBearing));
               }}
             />
+            {/* Direction handle — visible dot */}
             <circle
-              cx={scaleX(antenna.x) + Math.cos(degToRad(localAntennaDirection - 90)) * 34}
-              cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 34}
+              cx={scaleX(antenna.x) + Math.cos(degToRad(localAntennaDirection - 90)) * 50}
+              cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 50}
+              r="16"
+              fill="rgba(37,99,235,0.22)"
+              pointerEvents="none"
+            />
+            <circle
+              cx={scaleX(antenna.x) + Math.cos(degToRad(localAntennaDirection - 90)) * 50}
+              cy={scaleY(antenna.y) + Math.sin(degToRad(localAntennaDirection - 90)) * 50}
               r="6"
               fill="#2563eb"
               pointerEvents="none"
