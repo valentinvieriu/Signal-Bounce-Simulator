@@ -13,6 +13,66 @@ export const smoothstep = (edge0, edge1, value) => {
   return t * t * (3 - 2 * t);
 };
 
+const ALIGNMENT_LOCK_THRESHOLD_DEG = 2;
+const ALIGNMENT_FEATHER_RATIO = 0.35;
+const ALIGNMENT_CONE_WEIGHT = 0.75;
+const ALIGNMENT_APPROACH_WEIGHT = 0.25;
+const ALIGNMENT_FOCUS_BASE = 0.92;
+const ALIGNMENT_FOCUS_SCORE_MULTIPLIER = 0.56;
+const ALIGNMENT_GUIDE_PATTERNS = [
+  { minScore: 0.92, pattern: [-0.85, -0.35, 0.35, 0.85] },
+  { minScore: 0.7, pattern: [-0.75, 0, 0.75] },
+  { minScore: 0.4, pattern: [-0.55, 0.55] },
+  { minScore: 0.12, pattern: [-0.35, 0.35] },
+];
+
+const ALIGNMENT_PALETTES = {
+  locked: {
+    stroke: "#16a34a",
+    glow: "rgba(22,163,74,0.18)",
+    edge: "#86efac",
+    fill: "rgba(22,163,74,0.14)",
+    guide: "rgba(22,163,74,0.36)",
+    badgeClassName: "bg-emerald-100 text-emerald-800",
+    panelClassName: "border-emerald-200 bg-emerald-50",
+    textClassName: "text-emerald-900",
+    subtextClassName: "text-emerald-700",
+  },
+  converging: {
+    stroke: "#0891b2",
+    glow: "rgba(8,145,178,0.18)",
+    edge: "#67e8f9",
+    fill: "rgba(8,145,178,0.12)",
+    guide: "rgba(8,145,178,0.3)",
+    badgeClassName: "bg-cyan-100 text-cyan-800",
+    panelClassName: "border-cyan-200 bg-cyan-50",
+    textClassName: "text-cyan-900",
+    subtextClassName: "text-cyan-700",
+  },
+  fringe: {
+    stroke: "#d97706",
+    glow: "rgba(217,119,6,0.18)",
+    edge: "#fdba74",
+    fill: "rgba(217,119,6,0.11)",
+    guide: "rgba(217,119,6,0.24)",
+    badgeClassName: "bg-amber-100 text-amber-800",
+    panelClassName: "border-amber-200 bg-amber-50",
+    textClassName: "text-amber-900",
+    subtextClassName: "text-amber-700",
+  },
+  default: {
+    stroke: "#2563eb",
+    glow: "rgba(37,99,235,0.16)",
+    edge: "#93c5fd",
+    fill: "rgba(37,99,235,0.08)",
+    guide: "rgba(37,99,235,0.18)",
+    badgeClassName: "bg-zinc-100 text-zinc-700",
+    panelClassName: "border-zinc-200 bg-white",
+    textClassName: "text-zinc-900",
+    subtextClassName: "text-zinc-500",
+  },
+};
+
 export const DEFAULTS = {
   gyroMode: "north",
   distanceKm: 5.32,
@@ -47,6 +107,10 @@ export const MAP_TIPS = [
     text: "Open edges let the signal leave the building. Closed edges reflect it.",
   },
 ];
+
+export function getAlignmentPalette(state) {
+  return ALIGNMENT_PALETTES[state] ?? ALIGNMENT_PALETTES.default;
+}
 
 export function createDefaultSimulationState() {
   return {
@@ -131,14 +195,14 @@ export function getSimulationTelemetry(sim) {
     rays: { main, left, right, guide: guideRays },
     alignmentError,
     alignment,
-    isAligned: alignment.state === "locked",
+    isAligned: main.didExit && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,
   };
 }
 
 export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
   const halfSpread = Math.max(beamSpread / 2, 1);
-  const lockThreshold = Math.max(2, Math.min(8, halfSpread * 0.18));
-  const featherThreshold = halfSpread + Math.max(4, halfSpread * 0.35);
+  const lockThreshold = ALIGNMENT_LOCK_THRESHOLD_DEG;
+  const featherThreshold = halfSpread + Math.max(4, halfSpread * ALIGNMENT_FEATHER_RATIO);
 
   if (!didExit || signedError === null || !Number.isFinite(signedError)) {
     return {
@@ -162,21 +226,10 @@ export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
   const coneScore = 1 - smoothstep(lockThreshold, halfSpread, error);
   const approachScore = 1 - smoothstep(halfSpread, featherThreshold, error);
   const centerBias = 1 - smoothstep(0, lockThreshold, error);
-  const score = clamp(coneScore * 0.75 + approachScore * 0.25, 0, 1);
-  const focusSpread = Math.max(lockThreshold, halfSpread * (0.92 - score * 0.56));
-  const guideRayCount = score >= 0.92 ? 4 : score >= 0.7 ? 3 : score >= 0.4 ? 2 : score > 0.12 ? 1 : 0;
-  const guideRayPattern =
-    guideRayCount === 1
-      ? [-0.35, 0.35]
-      : guideRayCount === 2
-        ? [-0.55, 0.55]
-        : guideRayCount === 3
-          ? [-0.75, 0, 0.75]
-          : [-0.85, -0.35, 0.35, 0.85];
-  const visualGuideOffsets =
-    guideRayCount === 0
-      ? []
-      : guideRayPattern.map((position) => position * focusSpread);
+  const score = clamp(coneScore * ALIGNMENT_CONE_WEIGHT + approachScore * ALIGNMENT_APPROACH_WEIGHT, 0, 1);
+  const focusSpread = Math.max(lockThreshold, halfSpread * (ALIGNMENT_FOCUS_BASE - score * ALIGNMENT_FOCUS_SCORE_MULTIPLIER));
+  const guidePattern = ALIGNMENT_GUIDE_PATTERNS.find(({ minScore }) => score >= minScore)?.pattern ?? [];
+  const visualGuideOffsets = guidePattern.map((position) => position * focusSpread);
 
   let state = "missed";
   let label = "Outside cone";

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { COMPASS_MARKERS, degToRad, norm360, radToDeg } from "../lib/simulation";
+import { COMPASS_MARKERS, degToRad, getAlignmentPalette, norm360, radToDeg } from "../lib/simulation";
 import { Button, Label, NumberField, SliderRow, Switch } from "./ui";
 
 function getArcPoint(radius, arcRadius, bearing) {
@@ -86,14 +86,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const coneArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.halfSpread, targetLocalBearing + alignment.halfSpread);
   const lockArcPath = describeArc(radius, sweepRadius, targetLocalBearing - alignment.lockThreshold, targetLocalBearing + alignment.lockThreshold);
   const useLockPulse = alignmentError !== null && alignmentError < Math.max(0.75, alignment.lockThreshold * 0.35);
-  const alignmentPalette =
-    alignment.state === "locked"
-      ? { stroke: "#16a34a", glow: "rgba(22,163,74,0.18)", badge: "bg-emerald-100 text-emerald-800", panel: "border-emerald-200 bg-emerald-50", text: "text-emerald-900", subtext: "text-emerald-700" }
-      : alignment.state === "converging"
-        ? { stroke: "#0891b2", glow: "rgba(8,145,178,0.18)", badge: "bg-cyan-100 text-cyan-800", panel: "border-cyan-200 bg-cyan-50", text: "text-cyan-900", subtext: "text-cyan-700" }
-        : alignment.state === "fringe"
-          ? { stroke: "#d97706", glow: "rgba(217,119,6,0.18)", badge: "bg-amber-100 text-amber-800", panel: "border-amber-200 bg-amber-50", text: "text-amber-900", subtext: "text-amber-700" }
-          : { stroke: "#2563eb", glow: "rgba(37,99,235,0.16)", badge: "bg-zinc-100 text-zinc-700", panel: "border-zinc-200 bg-white", text: "text-zinc-900", subtext: "text-zinc-500" };
+  const alignmentPalette = getAlignmentPalette(alignment.state);
 
   return (
     <div className="flex flex-col rounded-[2rem] border border-zinc-200 bg-white/90 shadow-sm">
@@ -236,7 +229,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
             <path
               d={coneArcPath}
               fill="none"
-              stroke={alignment.glow}
+              stroke={alignmentPalette.glow}
               strokeWidth="18"
               strokeLinecap="round"
               pointerEvents="none"
@@ -316,13 +309,13 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
         </div>
 
         <div className="mt-2 grid gap-4 rounded-3xl border border-zinc-100 bg-zinc-50 p-4">
-          <div className={`rounded-2xl border px-4 py-3 ${alignmentPalette.panel}`}>
+          <div className={`rounded-2xl border px-4 py-3 ${alignmentPalette.panelClassName}`}>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className={`text-sm font-semibold ${alignmentPalette.text}`}>
+                <p className={`text-sm font-semibold ${alignmentPalette.textClassName}`}>
                   {isAligned ? "Radar aligned" : "Radar convergence"}
                 </p>
-                <p className={`mt-1 text-xs ${alignmentPalette.subtext}`}>
+                <p className={`mt-1 text-xs ${alignmentPalette.subtextClassName}`}>
                   {isAligned
                     ? "The main exit ray is inside the lock window. Keep the antenna here for a stable handoff."
                     : alignmentError !== null
@@ -330,7 +323,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
                       : "No exit path yet. Adjust the beam or wall openings until the radar can see the target."}
                 </p>
               </div>
-              <div className={`rounded-full px-3 py-1 text-xs font-semibold ${alignmentPalette.badge}`}>
+              <div className={`rounded-full px-3 py-1 text-xs font-semibold ${alignmentPalette.badgeClassName}`}>
                 {alignmentError !== null ? `${Math.round(alignment.score * 100)}% ${alignment.label.toLowerCase()}` : "No exit"}
               </div>
             </div>

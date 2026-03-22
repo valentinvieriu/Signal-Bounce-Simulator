@@ -93,6 +93,11 @@ describe("smoothstep", () => {
   it("eases values inside the range", () => {
     expect(smoothstep(0, 10, 5)).toBeCloseTo(0.5);
   });
+
+  it("handles degenerate ranges when both edges are the same", () => {
+    expect(smoothstep(10, 10, 9)).toBe(0);
+    expect(smoothstep(10, 10, 10)).toBe(1);
+  });
 });
 
 // --- State helpers ---
@@ -294,6 +299,21 @@ describe("getSimulationTelemetry", () => {
     expect(telemetry.isAligned).toBe(false);
     expect(telemetry.alignment.state).toBe("missed");
   });
+
+  it("keeps the legacy 2° aligned threshold even if the cone lock zone is wider", () => {
+    const telemetry = getSimulationTelemetry({
+      ...createDefaultSimulationState(),
+      forwardBearing: 0,
+      antennaDirection: 0,
+      targetBearing: 4,
+      beamSpread: 120,
+      wallBounces: 0,
+      surfaces: { top: "pass", right: "reflect", bottom: "reflect", left: "reflect" },
+    });
+
+    expect(telemetry.alignment.state).toBe("converging");
+    expect(telemetry.isAligned).toBe(false);
+  });
 });
 
 describe("getAlignmentProfile", () => {
@@ -358,6 +378,13 @@ describe("getAlignmentProfile", () => {
     expect(leftApproach.state).toBe(rightApproach.state);
     expect(leftApproach.score).toBeCloseTo(rightApproach.score);
     expect(leftApproach.visualGuideOffsets).toEqual(rightApproach.visualGuideOffsets);
+  });
+
+  it("adjusts guide offset counts across score bands", () => {
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 0 }).visualGuideOffsets).toHaveLength(4);
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 8 }).visualGuideOffsets).toHaveLength(3);
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 18 }).visualGuideOffsets).toHaveLength(2);
+    expect(getAlignmentProfile({ beamSpread: 60, didExit: true, signedError: 60 }).visualGuideOffsets).toHaveLength(0);
   });
 
   it("falls back to missed when well outside the cone", () => {

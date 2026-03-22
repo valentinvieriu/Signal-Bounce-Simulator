@@ -6,6 +6,7 @@ import {
   MAP_TIPS,
   clamp,
   degToRad,
+  getAlignmentPalette,
   norm360,
   radToDeg,
 } from "../lib/simulation";
@@ -51,6 +52,10 @@ function getExteriorPoints(result) {
   }
 
   return result.points.slice(-2);
+}
+
+function getFirstSegmentPoints(result) {
+  return result.points.slice(0, Math.min(result.points.length, 2));
 }
 
 const MotionCircle = motion.circle;
@@ -121,7 +126,11 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
 
-  const createPathFromPoints = (points) => points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ");
+  const createPathFromPoints = (points) => (
+    points.length >= 2
+      ? points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleX(point.x)} ${scaleY(point.y)}`).join(" ")
+      : ""
+  );
   const createPath = (result, segment = "full") => {
     const points =
       segment === "interior"
@@ -129,23 +138,24 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
         : segment === "exterior"
           ? getExteriorPoints(result)
           : result.points;
-
-    return points.length >= 2 ? createPathFromPoints(points) : "";
+    return createPathFromPoints(points);
   };
   const createConePath = () => {
-    const leftPath = getInteriorPoints(left).map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
-    const rightPath = [...getInteriorPoints(right)].reverse().map((point) => `${scaleX(point.x)} ${scaleY(point.y)}`);
+    const leftSegment = getFirstSegmentPoints(left);
+    const rightSegment = getFirstSegmentPoints(right);
 
-    return `M ${leftPath.join(" L ")} L ${rightPath.join(" L ")} Z`;
+    if (leftSegment.length < 2 || rightSegment.length < 2) {
+      return "";
+    }
+
+    return [
+      `M ${scaleX(leftSegment[0].x)} ${scaleY(leftSegment[0].y)}`,
+      `L ${scaleX(leftSegment[1].x)} ${scaleY(leftSegment[1].y)}`,
+      `L ${scaleX(rightSegment[1].x)} ${scaleY(rightSegment[1].y)}`,
+      "Z",
+    ].join(" ");
   };
-  const alignmentPalette =
-    alignment.state === "locked"
-      ? { main: "#16a34a", edge: "#86efac", fill: "rgba(22,163,74,0.14)", guide: "rgba(22,163,74,0.36)", badge: "border-transparent bg-emerald-100 text-emerald-800" }
-      : alignment.state === "converging"
-        ? { main: "#0891b2", edge: "#67e8f9", fill: "rgba(8,145,178,0.12)", guide: "rgba(8,145,178,0.3)", badge: "border-transparent bg-cyan-100 text-cyan-800" }
-        : alignment.state === "fringe"
-          ? { main: "#d97706", edge: "#fdba74", fill: "rgba(217,119,6,0.11)", guide: "rgba(217,119,6,0.24)", badge: "border-transparent bg-amber-100 text-amber-800" }
-          : { main: "#2563eb", edge: "#93c5fd", fill: "rgba(37,99,235,0.08)", guide: "rgba(37,99,235,0.18)", badge: "border-transparent bg-zinc-100 text-zinc-700" };
+  const alignmentPalette = getAlignmentPalette(alignment.state);
 
   const summaryCards = [
     { label: "Building size", value: `${widthUnits.toFixed(1)} m × ${depthUnits.toFixed(1)} m` },
@@ -166,7 +176,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
             <p className="mt-1 text-sm font-normal text-zinc-500">Drag to move or rotate antenna. Choose pass/reflect for walls.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={alignmentPalette.badge}>{main.didExit ? alignment.label : "No exit"}</Badge>
+            <Badge className={`border-transparent ${alignmentPalette.badgeClassName}`}>{main.didExit ? alignment.label : "No exit"}</Badge>
             <Badge className="border-transparent bg-zinc-100 text-zinc-700">{main.didExit ? `Exit ${main.finalTrueBearing.toFixed(1)}°` : "Contained"}</Badge>
           </div>
         </div>
@@ -244,12 +254,12 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               opacity="0.65"
             />
             <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.18 + alignment.approachScore * 0.18} />
-            <path d={createPath(left, "interior")} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
-            <path d={createPath(right, "interior")} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
+            <path d={createPathFromPoints(getFirstSegmentPoints(left))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
+            <path d={createPathFromPoints(getFirstSegmentPoints(right))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
             {guide.map((result, index) => (
               <path
                 key={`guide-${index}`}
-                d={createPath(result, "interior")}
+                d={createPathFromPoints(getFirstSegmentPoints(result))}
                 fill="none"
                 stroke={alignmentPalette.guide}
                 strokeWidth={1.1 + alignment.score * 0.8}
