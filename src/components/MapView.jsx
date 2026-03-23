@@ -4,6 +4,7 @@ import { Move, Waves } from "lucide-react";
 
 import {
   MAP_TIPS,
+  buildBeamSegments,
   clamp,
   degToRad,
   getAlignmentPalette,
@@ -54,8 +55,10 @@ function getExteriorPoints(result) {
   return result.points.slice(-2);
 }
 
-function getFirstSegmentPoints(result) {
-  return result.points.slice(0, Math.min(result.points.length, 2));
+function getMainBouncePoints(result) {
+  if (result.points.length < 2) return [];
+  const interior = result.didExit ? result.points.slice(1, -1) : result.points.slice(1);
+  return interior.filter((p) => !p.isTerminal);
 }
 
 const MotionCircle = motion.circle;
@@ -140,21 +143,8 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
           : result.points;
     return createPathFromPoints(points);
   };
-  const createConePath = () => {
-    const leftSegment = getFirstSegmentPoints(left);
-    const rightSegment = getFirstSegmentPoints(right);
-
-    if (leftSegment.length < 2 || rightSegment.length < 2) {
-      return "";
-    }
-
-    return [
-      `M ${scaleX(leftSegment[0].x)} ${scaleY(leftSegment[0].y)}`,
-      `L ${scaleX(leftSegment[1].x)} ${scaleY(leftSegment[1].y)}`,
-      `L ${scaleX(rightSegment[1].x)} ${scaleY(rightSegment[1].y)}`,
-      "Z",
-    ].join(" ");
-  };
+  const beamSegments = useMemo(() => buildBeamSegments(left, right), [left, right]);
+  const mainBouncePoints = useMemo(() => getMainBouncePoints(main), [main]);
   const alignmentPalette = getAlignmentPalette(alignment.state);
 
   const summaryCards = [
@@ -253,13 +243,56 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               strokeDasharray="8 8"
               opacity="0.65"
             />
-            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.18 + alignment.approachScore * 0.18} />
-            <path d={createPathFromPoints(getFirstSegmentPoints(left))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
-            <path d={createPathFromPoints(getFirstSegmentPoints(right))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
+            {/* Beam cone segments — filled quads between left/right edge rays */}
+            {beamSegments.segments.map((seg) => (
+              <path
+                key={`cone-${seg.index}`}
+                d={[
+                  `M ${scaleX(seg.leftStart.x)} ${scaleY(seg.leftStart.y)}`,
+                  `L ${scaleX(seg.leftEnd.x)} ${scaleY(seg.leftEnd.y)}`,
+                  `L ${scaleX(seg.rightEnd.x)} ${scaleY(seg.rightEnd.y)}`,
+                  `L ${scaleX(seg.rightStart.x)} ${scaleY(seg.rightStart.y)}`,
+                  "Z",
+                ].join(" ")}
+                fill={alignmentPalette.fill}
+                opacity={(0.18 + alignment.approachScore * 0.18) * seg.attenuation}
+              />
+            ))}
+            {/* Edge rays — per segment with attenuation */}
+            {beamSegments.segments.map((seg) => (
+              <g key={`edges-${seg.index}`} opacity={0.72 * seg.attenuation}>
+                <line
+                  x1={scaleX(seg.leftStart.x)} y1={scaleY(seg.leftStart.y)}
+                  x2={scaleX(seg.leftEnd.x)} y2={scaleY(seg.leftEnd.y)}
+                  stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round"
+                />
+                <line
+                  x1={scaleX(seg.rightStart.x)} y1={scaleY(seg.rightStart.y)}
+                  x2={scaleX(seg.rightEnd.x)} y2={scaleY(seg.rightEnd.y)}
+                  stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round"
+                />
+              </g>
+            ))}
+            {/* Diverged edge ray tails — independent dashed lines after cone breaks */}
+            {beamSegments.leftTail.length >= 2 && (
+              <path
+                d={createPathFromPoints(beamSegments.leftTail)}
+                fill="none" stroke={alignmentPalette.edge} strokeWidth="1.5" strokeDasharray="4 4"
+                strokeLinecap="round" strokeLinejoin="round" opacity="0.3"
+              />
+            )}
+            {beamSegments.rightTail.length >= 2 && (
+              <path
+                d={createPathFromPoints(beamSegments.rightTail)}
+                fill="none" stroke={alignmentPalette.edge} strokeWidth="1.5" strokeDasharray="4 4"
+                strokeLinecap="round" strokeLinejoin="round" opacity="0.3"
+              />
+            )}
+            {/* Guide rays — full path with attenuation */}
             {guide.map((result, index) => (
               <path
                 key={`guide-${index}`}
-                d={createPathFromPoints(getFirstSegmentPoints(result))}
+                d={createPath(result, "interior")}
                 fill="none"
                 stroke={alignmentPalette.guide}
                 strokeWidth={1.1 + alignment.score * 0.8}
@@ -268,19 +301,49 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
                 opacity={0.16 + alignment.score * 0.2}
               />
             ))}
-            <path d={createPath(main, "interior")} fill="none" stroke={alignmentPalette.main} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+            {/* Main ray — interior segments with attenuation */}
+            {getInteriorPoints(main).length >= 2 && (() => {
+              const pts = getInteriorPoints(main);
+              return pts.slice(0, -1).map((from, i) => {
+                const to = pts[i + 1];
+                const attenuation = Math.pow(0.8, i);
+                return (
+                  <line
+                    key={`main-${i}`}
+                    x1={scaleX(from.x)} y1={scaleY(from.y)}
+                    x2={scaleX(to.x)} y2={scaleY(to.y)}
+                    stroke={alignmentPalette.main}
+                    strokeWidth={Math.max(2, 4 - i * 0.4)}
+                    strokeLinecap="round"
+                    opacity={attenuation}
+                  />
+                );
+              });
+            })()}
+            {/* Main ray — exit segment */}
             {main.didExit && (
               <path
                 d={createPath(main, "exterior")}
                 fill="none"
                 stroke={alignmentPalette.main}
-                strokeWidth="3"
+                strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity="0.38"
+                opacity={0.32 * Math.pow(0.8, main.reflectionsUsed)}
                 strokeDasharray="8 8"
               />
             )}
+            {/* Bounce point markers */}
+            {mainBouncePoints.map((point, i) => {
+              const attenuation = Math.pow(0.8, i + 1);
+              return (
+                <g key={`bounce-${i}`} transform={`translate(${scaleX(point.x)}, ${scaleY(point.y)})`}>
+                  <circle r="7" fill="none" stroke={alignmentPalette.glow} strokeWidth="2" opacity={0.6 * attenuation} />
+                  <circle r="3" fill={alignmentPalette.stroke} opacity={0.85 * attenuation} />
+                  <text x="11" y="4" fontSize="9" fontWeight="600" fill="#71717a" opacity={0.65 * attenuation}>{i + 1}</text>
+                </g>
+              );
+            })}
 
             {wallSegments.map((wall) => (
               <g key={wall.key}>
