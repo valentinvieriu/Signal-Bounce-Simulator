@@ -31,7 +31,11 @@ function StepLocation({ userLocation, onLocationSet }) {
 
   const requestGps = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setStatus("Geolocation is not available in this browser.");
+      setStatus(
+        !window.isSecureContext
+          ? "Location requires HTTPS. Please access this page over HTTPS or localhost."
+          : "Geolocation is not available in this browser.",
+      );
       return;
     }
 
@@ -56,7 +60,13 @@ function StepLocation({ userLocation, onLocationSet }) {
         setStatus(`GPS location set (±${Math.round(normalized.accuracy ?? 0)} m).`);
       },
       (error) => {
-        setStatus(`Location request failed: ${error.message}`);
+        const hints = {
+          [error.PERMISSION_DENIED]:
+            "Location permission denied. On iOS, check Settings → Safari → Location, and ensure the site is allowed.",
+          [error.POSITION_UNAVAILABLE]: "Location unavailable. Try again outdoors or with Wi-Fi enabled.",
+          [error.TIMEOUT]: "Location request timed out. Please try again.",
+        };
+        setStatus(hints[error.code] || `Location request failed: ${error.message}`);
       },
       { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 },
     );
