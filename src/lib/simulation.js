@@ -79,6 +79,28 @@ const ALIGNMENT_PALETTES = {
 
 const EARTH_RADIUS_M = 6371000;
 
+// LoRa 868 MHz RF parameters
+export const LORA = {
+  frequencyMHz: 868,
+  txPowerDbm: 14,
+  sensitivityDbm: -137, // SF12 worst-case
+  fsplRefDb: 20 * Math.log10(868) + 20 * Math.log10(1) - 27.55, // FSPL at 1 m ≈ 31.3 dB
+};
+
+// Wall material RF properties at ~868 MHz (dB values from ITU-R P.1238 / measured studies)
+export const WALL_MATERIALS = {
+  open:     { label: "Open",     penDb: 0,  refDb: 0,   color: "#f59e0b", dash: "10 8" },
+  glass:    { label: "Glass",    penDb: 2,  refDb: 8,   color: "#38bdf8", dash: null },
+  drywall:  { label: "Drywall",  penDb: 4,  refDb: 5,   color: "#a3a3a3", dash: null },
+  brick:    { label: "Brick",    penDb: 9,  refDb: 4,   color: "#b45309", dash: null },
+  concrete: { label: "Concrete", penDb: 14, refDb: 3,   color: "#525252", dash: null },
+  metal:    { label: "Metal",    penDb: 30, refDb: 0.5, color: "#27272a", dash: null },
+};
+
+export const MATERIAL_KEYS = Object.keys(WALL_MATERIALS);
+
+export const EIRP_LIMIT_DBM = 14; // EU ETSI EN 300 220 limit for 868 MHz
+
 export const DEFAULTS = {
   gyroMode: "north",
   distanceKm: 5.32,
@@ -86,11 +108,12 @@ export const DEFAULTS = {
   forwardBearing: 188,
   antennaDirection: 206,
   beamSpread: 120,
-  wallBounces: 2,
+  antennaGainDbi: 5.5, // Moxon rectangle default
+  wallBounces: 4,
   widthUnits: 68,
   depthUnits: 22,
   antenna: { x: 34, y: 11 },
-  surfaces: { top: "reflect", right: "reflect", bottom: "reflect", left: "reflect" },
+  surfaces: { top: "brick", right: "brick", bottom: "brick", left: "brick" },
 };
 
 export const COMPASS_MARKERS = [
@@ -107,10 +130,10 @@ export const MAP_TIPS = [
     text: "Drag center blue dot to move antenna. Drag outer blue dot unless gyro is steering it.",
   },
   {
-    label: "Wall behavior",
+    label: "Wall materials",
     icon: "waves",
     tone: "text-zinc-500",
-    text: "Open edges let the signal leave the building. Closed edges reflect it.",
+    text: "Each wall material has different penetration and reflection loss. Open walls let signal pass freely. Concrete and metal are near-opaque.",
   },
 ];
 
@@ -205,6 +228,7 @@ export function getResetMapState(currentState) {
     ...currentState,
     gyroMode: defaults.gyroMode,
     antennaDirection: defaults.antennaDirection,
+    antennaGainDbi: defaults.antennaGainDbi,
     beamSpread: defaults.beamSpread,
     wallBounces: defaults.wallBounces,
     widthUnits: defaults.widthUnits,
@@ -320,6 +344,7 @@ export function getSimulationTelemetry(sim) {
   const {
     antenna,
     antennaDirection,
+    antennaGainDbi = 0,
     beamSpread,
     depthUnits,
     distanceKm,
@@ -340,16 +365,19 @@ export function getSimulationTelemetry(sim) {
     escapeDistanceUnits: escapeDistance,
     forwardBearingDeg: forwardBearing,
     surfaces,
+    antennaGainDbi,
   };
 
   const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
   const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
   const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
-  const signedAlignmentError = main.didExit ? shortestDelta(main.finalTrueBearing, targetBearing) : null;
+
+  const bestExit = findBestExitOpportunity(main.exitOpportunities, targetBearing, antennaGainDbi);
+  const signedAlignmentError = bestExit ? shortestDelta(bestExit.exitBearing, targetBearing) : null;
   const alignmentError = signedAlignmentError === null ? null : Math.abs(signedAlignmentError);
   const alignment = getAlignmentProfile({
     beamSpread,
-    didExit: main.didExit,
+    didExit: bestExit !== null,
     signedError: signedAlignmentError,
   });
   const guideRays = alignment.visualGuideOffsets.map((offsetDeg) => (
@@ -362,8 +390,83 @@ export function getSimulationTelemetry(sim) {
     rays: { main, left, right, guide: guideRays },
     alignmentError,
     alignment,
-    isAligned: main.didExit && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,
+    bestExit,
+    isAligned: bestExit !== null && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,
   };
+}
+
+function findBestExitOpportunity(exitOpportunities, targetBearing, antennaGainDbi = 0) {
+  const effectiveSensitivity = LORA.sensitivityDbm - antennaGainDbi;
+  const eirpDbm = Math.min(LORA.txPowerDbm + antennaGainDbi, EIRP_LIMIT_DBM);
+  let best = null;
+
+  for (const opp of exitOpportunities) {
+    if (opp.powerDbm < effectiveSensitivity) continue;
+
+    const alignmentError = Math.abs(shortestDelta(opp.bearing, targetBearing));
+    const powerRange = eirpDbm - effectiveSensitivity;
+    const powerScore = clamp((opp.powerDbm - effectiveSensitivity) / powerRange, 0, 1);
+    const alignmentScore = 1 - alignmentError / 180;
+    // How well does the exit wall face the target?
+    const wallFacingError = Math.abs(shortestDelta(opp.wallNormalBearing ?? opp.bearing, targetBearing));
+    const wallFacingScore = 1 - wallFacingError / 180;
+    // Power (50%), ray-target alignment (30%), wall-faces-target (20%)
+    const score = 0.5 * powerScore + 0.3 * alignmentScore + 0.2 * wallFacingScore;
+
+    if (!best || score > best.score) {
+      best = {
+        bounceIndex: opp.bounceIndex,
+        wall: opp.wall,
+        material: opp.material,
+        exitBearing: opp.bearing,
+        alignmentError,
+        powerDbm: opp.powerDbm,
+        pathMeters: opp.pathMeters,
+        score,
+      };
+    }
+  }
+
+  return best;
+}
+
+export function findBestBearing(sim) {
+  const {
+    antenna,
+    antennaGainDbi = 0,
+    depthUnits,
+    distanceKm,
+    forwardBearing,
+    surfaces,
+    targetBearing,
+    wallBounces,
+    widthUnits,
+  } = sim;
+
+  const escapeDistance = Math.max(500, Math.min(distanceKm * 1000, 20000));
+  const sharedParams = {
+    origin: antenna,
+    width: widthUnits,
+    depth: depthUnits,
+    maxReflections: wallBounces,
+    escapeDistanceUnits: escapeDistance,
+    forwardBearingDeg: forwardBearing,
+    surfaces,
+    antennaGainDbi,
+  };
+
+  let best = null;
+
+  for (let bearing = 0; bearing < 360; bearing++) {
+    const localDir = norm360(bearing - forwardBearing);
+    const result = traceRay({ ...sharedParams, bearingLocalDeg: localDir });
+    const scored = findBestExitOpportunity(result.exitOpportunities, targetBearing, antennaGainDbi);
+    if (scored && (!best || scored.score > best.score)) {
+      best = { antennaBearing: bearing, ...scored };
+    }
+  }
+
+  return best;
 }
 
 export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
@@ -429,6 +532,11 @@ export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
   };
 }
 
+function fsplDb(distanceMeters) {
+  if (distanceMeters <= 0) return 0;
+  return LORA.fsplRefDb + 20 * Math.log10(distanceMeters);
+}
+
 export function traceRay({
   origin,
   bearingLocalDeg,
@@ -438,7 +546,12 @@ export function traceRay({
   escapeDistanceUnits,
   forwardBearingDeg,
   surfaces,
+  antennaGainDbi = 0,
 }) {
+  // EIRP = TX + gain, capped at regulatory limit; RX sensitivity improved by gain
+  const eirpDbm = Math.min(LORA.txPowerDbm + antennaGainDbi, EIRP_LIMIT_DBM);
+  const effectiveSensitivity = LORA.sensitivityDbm - antennaGainDbi;
+
   let x = clamp(origin.x, 0.1, width - 0.1);
   let y = clamp(origin.y, 0.1, depth - 0.1);
   let dx = Math.sin(degToRad(norm360(bearingLocalDeg)));
@@ -446,7 +559,11 @@ export function traceRay({
   let reflectionsUsed = 0;
   let exitedVia = null;
   let didExit = false;
-  const points = [{ x, y, wall: null }];
+  let pathMeters = 0;
+  let accumulatedRefLossDb = 0;
+  let powerDbm = eirpDbm;
+  const points = [{ x, y, wall: null, powerDbm: eirpDbm }];
+  const exitOpportunities = [];
 
   for (let step = 0; step < 48; step += 1) {
     const hits = [
@@ -459,23 +576,62 @@ export function traceRay({
     const hit = hits.length ? hits.reduce((best, candidate) => (candidate.t < best.t ? candidate : best)) : null;
 
     if (!hit) {
-      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true });
+      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true, powerDbm });
       didExit = true;
       break;
     }
 
+    pathMeters += hit.t;
+    // Power = EIRP - FSPL(total distance) - accumulated reflection losses
+    powerDbm = eirpDbm - fsplDb(pathMeters) - accumulatedRefLossDb;
     x += dx * hit.t;
     y += dy * hit.t;
 
-    const isTerminal = surfaces[hit.wall] === "pass" || reflectionsUsed >= maxReflections;
-    points.push({ x, y, wall: hit.wall, isTerminal });
+    // At every wall hit, record what happens if the signal transmits through
+    const material = WALL_MATERIALS[surfaces[hit.wall]] ?? WALL_MATERIALS.concrete;
+    const exitLocalBearing = norm360(radToDeg(Math.atan2(dx, -dy)));
+
+    // Angle-dependent losses (Fresnel approximation):
+    // cosTheta = cos(incidence angle from wall normal)
+    // Grazing angles → high penetration loss, low reflection loss
+    // Normal incidence → base penetration loss, base reflection loss
+    const cosTheta = (hit.wall === "left" || hit.wall === "right") ? Math.abs(dx) : Math.abs(dy);
+    const clampedCos = Math.max(cosTheta, 0.15);
+    const effectivePenDb = material.penDb / clampedCos;
+    const effectiveRefDb = material.refDb * clampedCos;
+
+    const transmittedPower = powerDbm - effectivePenDb;
+
+    // Wall outward normal in true bearing (for exit-position scoring)
+    const WALL_NORMAL_LOCAL = { top: 0, right: 90, bottom: 180, left: 270 };
+    const wallNormalBearing = norm360(WALL_NORMAL_LOCAL[hit.wall] + forwardBearingDeg);
+
+    exitOpportunities.push({
+      bounceIndex: reflectionsUsed,
+      wall: hit.wall,
+      material: surfaces[hit.wall],
+      bearing: norm360(exitLocalBearing + forwardBearingDeg),
+      wallNormalBearing,
+      x, y,
+      powerDbm: transmittedPower,
+      pathMeters,
+    });
+
+    // Open walls always let the signal through; otherwise check bounce limit
+    const isTerminal = surfaces[hit.wall] === "open" || reflectionsUsed >= maxReflections;
+    points.push({ x, y, wall: hit.wall, isTerminal, powerDbm });
 
     if (isTerminal) {
-      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true });
+      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true, powerDbm });
       exitedVia = hit.wall;
       didExit = true;
       break;
     }
+
+    // Accumulate reflection loss and continue bouncing (angle-dependent)
+    accumulatedRefLossDb += effectiveRefDb;
+    powerDbm = eirpDbm - fsplDb(pathMeters) - accumulatedRefLossDb;
+    if (powerDbm < effectiveSensitivity) break;
 
     reflectionsUsed += 1;
     if (hit.wall === "left" || hit.wall === "right") {
@@ -498,14 +654,16 @@ export function traceRay({
     exitedVia,
     reflectionsUsed,
     didExit,
+    powerDbm,
+    exitOpportunities,
   };
 }
-
-const ABSORPTION_PER_BOUNCE = 0.2;
 
 export function buildBeamSegments(leftRay, rightRay) {
   const segments = [];
   const maxPairs = Math.min(leftRay.points.length - 1, rightRay.points.length - 1);
+  const uiMaxDbm = -80;
+  const uiMinDbm = LORA.sensitivityDbm;
 
   for (let i = 0; i < maxPairs; i++) {
     const leftFrom = leftRay.points[i];
@@ -513,14 +671,10 @@ export function buildBeamSegments(leftRay, rightRay) {
     const rightFrom = rightRay.points[i];
     const rightTo = rightRay.points[i + 1];
 
-    // After the first segment, check if both rays hit the same wall.
-    // If they diverge, stop pairing — the cone concept breaks down.
     if (i > 0 && leftTo.wall && rightTo.wall && leftTo.wall !== rightTo.wall) {
       break;
     }
 
-    // If only one edge has exited while the other continues bouncing,
-    // the cone is no longer coherent — stop pairing.
     const leftExited = !!(leftTo.isExit);
     const rightExited = !!(rightTo.isExit);
     if (leftExited !== rightExited) {
@@ -528,6 +682,9 @@ export function buildBeamSegments(leftRay, rightRay) {
     }
 
     const isExterior = leftExited || rightExited;
+    const avgPower = ((leftFrom.powerDbm ?? 14) + (rightFrom.powerDbm ?? 14)) / 2;
+    const normalized = clamp((avgPower - uiMinDbm) / (uiMaxDbm - uiMinDbm), 0, 1);
+    const attenuation = Math.max(0.05, smoothstep(0, 1, normalized));
 
     segments.push({
       index: i,
@@ -535,7 +692,7 @@ export function buildBeamSegments(leftRay, rightRay) {
       leftEnd: leftTo,
       rightStart: rightFrom,
       rightEnd: rightTo,
-      attenuation: Math.pow(1 - ABSORPTION_PER_BOUNCE, i),
+      attenuation,
       isExterior,
     });
 

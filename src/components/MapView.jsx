@@ -4,14 +4,16 @@ import { Move, Waves } from "lucide-react";
 
 import {
   MAP_TIPS,
+  WALL_MATERIALS,
   buildBeamSegments,
   clamp,
   degToRad,
+  findBestBearing,
   getAlignmentPalette,
   norm360,
   radToDeg,
 } from "../lib/simulation";
-import { Badge, Button, InfoCard, NumberField, SliderRow, StatCard, WallPassToggle } from "./ui";
+import { Badge, Button, InfoCard, NumberField, SliderRow, StatCard, WallMaterialSelect } from "./ui";
 
 function getMapMetrics({ widthUnits, depthUnits, viewWidth, viewDepth, paddingX, paddingY }) {
   const maxWidth = viewWidth - paddingX * 2;
@@ -64,13 +66,14 @@ function getMainBouncePoints(result) {
 const MotionCircle = motion.circle;
 
 export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode }) {
-  const { widthUnits, depthUnits, beamSpread, wallBounces, forwardBearing, targetBearing, antennaDirection, antenna, surfaces } = sim;
+  const { widthUnits, depthUnits, beamSpread, antennaGainDbi = 0, wallBounces, forwardBearing, targetBearing, antennaDirection, antenna, surfaces } = sim;
   const viewWidth = 700;
   const viewDepth = 500;
   const paddingX = 90;
   const paddingY = 65;
   const mapRef = useRef(null);
   const [drag, setDrag] = useState(null); // { mode: "antenna"|"direction", pointerId, pointerType }
+  const [bestBearingResult, setBestBearingResult] = useState(undefined);
 
   const startDrag = (mode, event) => {
     if (event.pointerType !== "mouse") {
@@ -124,7 +127,16 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gridStep = dominantDimension > 200 ? 25 : dominantDimension > 100 ? 10 : dominantDimension > 40 ? 5 : dominantDimension > 10 ? 2 : 1;
   const gridPx = (mapW / widthUnits) * gridStep;
 
-  const { alignment, escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
+  const { alignment, escapeDistance, localAntennaDirection, rays, bestExit, isAligned } = telemetry;
+
+  const handleFindBestBearing = () => {
+    const result = findBestBearing(sim);
+    setBestBearingResult(result ?? null);
+    if (result) {
+      updateSim("antennaDirection", result.antennaBearing);
+      updateSim("wallBounces", result.bounceIndex);
+    }
+  };
   const { main, left, right, guide } = rays;
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
@@ -150,11 +162,10 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const summaryCards = [
     { label: "Building size", value: `${widthUnits.toFixed(1)} m × ${depthUnits.toFixed(1)} m` },
     { label: "Antenna position", value: `X ${antenna.x.toFixed(1)} m · Y ${antenna.y.toFixed(1)} m` },
-    { label: "Exit bearing", value: main.didExit ? `${main.finalTrueBearing.toFixed(1)}°` : "—", accent: isAligned },
-    { label: "Path length", value: `${(main.pathDistanceUnits / 1000).toFixed(2)} km` },
-    { label: "Reflections", value: String(main.reflectionsUsed) },
-    { label: "Alignment error", value: alignmentError !== null ? `${alignmentError.toFixed(1)}°` : "—" },
-    { label: "Alignment potential", value: `${Math.round(alignment.score * 100)}%`, accent: alignment.score >= 0.7 },
+    { label: "Best exit", value: bestExit ? `${bestExit.exitBearing.toFixed(1)}° via ${bestExit.material} wall` : "—", accent: isAligned },
+    { label: "Received power", value: bestExit ? `${bestExit.powerDbm.toFixed(1)} dBm` : "—", accent: bestExit && bestExit.powerDbm > -100 },
+    { label: "Bounces", value: bestExit ? `${bestExit.bounceIndex} (${bestExit.pathMeters.toFixed(0)} m path)` : "—" },
+    { label: "Alignment", value: `${Math.round(alignment.score * 100)}%`, accent: alignment.score >= 0.7 },
   ];
 
   return (
@@ -306,7 +317,8 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               const pts = getInteriorPoints(main);
               return pts.slice(0, -1).map((from, i) => {
                 const to = pts[i + 1];
-                const attenuation = Math.pow(0.8, i);
+                const opp = main.exitOpportunities[i];
+                const attenuation = opp ? clamp((opp.powerDbm - (-137)) / (14 - (-137)), 0.15, 1) : 1;
                 return (
                   <line
                     key={`main-${i}`}
@@ -329,13 +341,14 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
                 strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity={0.32 * Math.pow(0.8, main.reflectionsUsed)}
+                opacity={0.35}
                 strokeDasharray="8 8"
               />
             )}
             {/* Bounce point markers */}
             {mainBouncePoints.map((point, i) => {
-              const attenuation = Math.pow(0.8, i + 1);
+              const opp = main.exitOpportunities[i];
+              const attenuation = opp ? clamp((opp.powerDbm - (-137)) / (14 - (-137)), 0.1, 1) : 0.5;
               return (
                 <g key={`bounce-${i}`} transform={`translate(${scaleX(point.x)}, ${scaleY(point.y)})`}>
                   <circle r="7" fill="none" stroke={alignmentPalette.glow} strokeWidth="2" opacity={0.6 * attenuation} />
@@ -345,29 +358,54 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               );
             })}
 
-            {wallSegments.map((wall) => (
+            {wallSegments.map((wall) => {
+              const mat = WALL_MATERIALS[surfaces[wall.key]] ?? WALL_MATERIALS.concrete;
+              const isOpen = surfaces[wall.key] === "open";
+              const wallThickness = isOpen ? 2 : 8;
+              const isHorizontal = wall.key === "top" || wall.key === "bottom";
+              return (
               <g key={wall.key}>
-                <line
-                  x1={wall.x1}
-                  y1={wall.y1}
-                  x2={wall.x2}
-                  y2={wall.y2}
-                  stroke={surfaces[wall.key] === "reflect" ? "#27272a" : "#f59e0b"}
-                  strokeWidth="4"
-                  strokeDasharray={surfaces[wall.key] === "reflect" ? undefined : "10 8"}
-                  strokeLinecap="round"
-                />
+                {/* Wall thickness rectangle */}
+                {isHorizontal ? (
+                  <rect
+                    x={wall.x1}
+                    y={wall.y1 - wallThickness / 2}
+                    width={wall.x2 - wall.x1}
+                    height={wallThickness}
+                    rx="2"
+                    fill={mat.color}
+                    opacity={isOpen ? 0.25 : 0.55}
+                    stroke={mat.color}
+                    strokeWidth="1"
+                    strokeDasharray={mat.dash ?? undefined}
+                  />
+                ) : (
+                  <rect
+                    x={wall.x1 - wallThickness / 2}
+                    y={wall.y1}
+                    width={wallThickness}
+                    height={wall.y2 - wall.y1}
+                    rx="2"
+                    fill={mat.color}
+                    opacity={isOpen ? 0.25 : 0.55}
+                    stroke={mat.color}
+                    strokeWidth="1"
+                    strokeDasharray={mat.dash ?? undefined}
+                  />
+                )}
                 <foreignObject x={wall.fx} y={wall.fy} width={wall.fw} height={wall.fh} style={{ overflow: "visible" }}>
                   <div data-map-control="true" className={`pointer-events-none flex h-full w-full items-center ${wall.align}`}>
-                    <WallPassToggle
-                      checked={surfaces[wall.key] === "pass"}
-                      onChange={(checked) => updateSim("surfaces", { ...surfaces, [wall.key]: checked ? "pass" : "reflect" })}
+                    <WallMaterialSelect
+                      value={surfaces[wall.key]}
+                      onChange={(material) => updateSim("surfaces", { ...surfaces, [wall.key]: material })}
+                      materials={WALL_MATERIALS}
                       className="pointer-events-auto"
                     />
                   </div>
                 </foreignObject>
               </g>
-            ))}
+              );
+            })}
 
             <g transform={`translate(${scaleX(antenna.x)}, ${scaleY(antenna.y)})`}>
               <circle cx="0" cy="0" r="50" fill="none" stroke="rgba(37,99,235,0.14)" strokeWidth="1.5" strokeDasharray="4 5" />
@@ -432,6 +470,16 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               disabled={gyroControlsAntenna}
             />
             <SliderRow label="Beam spread" value={beamSpread} onChange={(value) => updateSim("beamSpread", value)} min={2} max={180} />
+            <SliderRow
+              label="Antenna gain"
+              value={antennaGainDbi}
+              onChange={(value) => updateSim("antennaGainDbi", value)}
+              min={0}
+              max={12}
+              step={0.5}
+              unit=" dBi"
+              note={`EIRP: ${Math.min(14 + antennaGainDbi, 14).toFixed(1)} dBm (14 dBm limit) · RX sensitivity: ${(-137 - antennaGainDbi).toFixed(1)} dBm`}
+            />
             <SliderRow label="Wall bounces" value={wallBounces} onChange={(value) => updateSim("wallBounces", value)} min={0} max={8} unit="" />
             <SliderRow label="Courtyard width" value={widthUnits} onChange={(value) => updateSim("widthUnits", value)} min={10} max={500} unit="m" />
             <SliderRow label="Courtyard depth" value={depthUnits} onChange={(value) => updateSim("depthUnits", value)} min={10} max={500} unit="m" />
@@ -470,7 +518,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               <StatCard key={card.label} label={card.label} value={card.value} accent={card.accent} />
             ))}
             <InfoCard icon={Waves} iconClassName="text-blue-500">
-              Target lock now uses three zones: a green lock core, the main cone body, and a feathered entry band that starts reacting before full alignment.
+              RF model uses 868 MHz LoRa parameters: 14 dBm TX, -137 dBm sensitivity (SF12). Each wall material has realistic penetration and reflection losses in dB.
             </InfoCard>
             {MAP_TIPS.map((tip) => (
               <InfoCard key={tip.label} icon={tip.icon === "move" ? Move : Waves} iconClassName={tip.tone}>
@@ -479,8 +527,22 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
             ))}
           </div>
           <div className="md:col-span-2 flex flex-wrap gap-2 pt-2">
-            <Button onClick={() => updateSim("resetMap")}>Reset map defaults</Button>
+            <Button onClick={() => { updateSim("resetMap"); setBestBearingResult(undefined); }}>Reset map defaults</Button>
+            <Button onClick={handleFindBestBearing}>Find best bearing</Button>
           </div>
+          {bestBearingResult && (
+            <div className="md:col-span-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+              <p className="font-semibold">Best antenna bearing: {bestBearingResult.antennaBearing}°</p>
+              <p className="mt-1 text-emerald-700">
+                Exit {bestBearingResult.exitBearing.toFixed(1)}° via {bestBearingResult.material} · {bestBearingResult.powerDbm.toFixed(1)} dBm · {bestBearingResult.bounceIndex} bounce{bestBearingResult.bounceIndex !== 1 ? "s" : ""} · Error {bestBearingResult.alignmentError.toFixed(1)}°
+              </p>
+            </div>
+          )}
+          {bestBearingResult === null && (
+            <div className="md:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              No viable exit path found. Signal is too weak to reach receiver sensitivity (-137 dBm) through current wall materials.
+            </div>
+          )}
         </div>
       </div>
     </div>

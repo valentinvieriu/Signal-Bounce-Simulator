@@ -16,12 +16,19 @@ Signal Bounce Simulator - an interactive RF propagation ray-tracing tool. Single
 
 ```
 src/
-  App.jsx        # All application logic: ray tracer, compass, map view, UI components
-  main.jsx       # React entry point
-  index.css      # Tailwind import
+  App.jsx                    # Root component, device heading hook, state management
+  main.jsx                   # React entry point
+  index.css                  # Tailwind import
+  lib/
+    simulation.js            # Ray tracer, scoring, alignment, findBestBearing, geo utilities
+  components/
+    Compass.jsx              # Compass view with alignment feedback
+    MapView.jsx              # Courtyard map view with beam visualization
+    NodeImportWizard.jsx     # CSV node import and geo-solve
+    ui.jsx                   # Shared UI primitives (Button, Badge, SliderRow, etc.)
 public/
-  favicon.svg    # App favicon
-index.html       # HTML shell
+  favicon.svg                # App favicon
+index.html                   # HTML shell
 ```
 
 ## Commands
@@ -33,7 +40,22 @@ index.html       # HTML shell
 
 ## Architecture notes
 
-- Everything lives in a single `App.jsx` file: math utilities, ray tracing (`traceRay`), custom hooks (`useDeviceHeading`), UI components, and the two main views (Compass, MapView)
-- State is managed with a single `useState(DEFAULTS)` in the root `App` component
-- The ray tracer supports configurable wall materials (reflect/pass), beam spread with left/right edge rays, and up to 8 wall bounces
+- Core logic split into `src/lib/simulation.js` (ray tracing, scoring, utilities) and UI components in `src/components/`
+- `App.jsx` contains root state (`useState(DEFAULTS)`), device heading hook, and view orchestration
+
+### RF propagation model (868 MHz LoRa)
+- `LORA` constant: TX power 14 dBm, sensitivity -137 dBm (SF12), 868 MHz frequency
+- `WALL_MATERIALS`: six material types (open, glass, drywall, brick, concrete, metal) each with `penDb` (penetration loss) and `refDb` (reflection loss) in dB based on ITU-R P.1238 / measured studies
+- `traceRay` tracks signal power in dBm: applies FSPL per segment, reflection loss per bounce, and records `exitOpportunities` at every wall hit with transmitted power (power - penDb)
+- Rays terminate when power drops below receiver sensitivity (-137 dBm)
+- At each wall hit, BOTH transmission (exit opportunity) and reflection happen — the ray continues bouncing while exit opportunities are collected
+
+### Scoring and optimization
+- `findBestExitOpportunity` scores exits by: 60% received power + 40% alignment to target bearing
+- `findBestBearing(sim)` sweeps 0-359° and picks the bearing with strongest combined score across all exit opportunities
+- `getSimulationTelemetry` uses the same scoring for real-time alignment feedback
 - Compass supports device orientation API on mobile (iOS `webkitCompassHeading`)
+
+## Maintenance
+
+- Keep this CLAUDE.md up to date when important architectural changes are made or new key features are added

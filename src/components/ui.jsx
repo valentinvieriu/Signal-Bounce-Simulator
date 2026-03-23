@@ -85,19 +85,19 @@ export function NumberField({ label, value, onChange, min, max, step = 1 }) {
   );
 }
 
-export function WallPassToggle({ checked, onChange, className = "" }) {
+export function WallMaterialSelect({ value, onChange, materials, className = "" }) {
+  const current = materials[value] ?? materials.concrete;
   return (
-    <label
-      className={`flex cursor-pointer items-center gap-2 rounded-2xl border border-zinc-200 bg-white/95 px-3 py-1.5 text-xs shadow-sm transition-colors hover:bg-zinc-50 ${className}`}
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={`cursor-pointer rounded-2xl border border-zinc-200 bg-white/95 px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm outline-none transition-colors hover:bg-zinc-50 focus:ring-2 focus:ring-zinc-950/10 ${className}`}
+      style={{ borderLeftColor: current.color, borderLeftWidth: 3 }}
     >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-amber-500"
-      />
-      <span className="font-medium text-zinc-600">Pass</span>
-    </label>
+      {Object.entries(materials).map(([key, mat]) => (
+        <option key={key} value={key}>{mat.label}</option>
+      ))}
+    </select>
   );
 }
 
