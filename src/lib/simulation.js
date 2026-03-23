@@ -124,6 +124,9 @@ function splitCsvRow(row) {
 
 function parseNumericCell(value) {
   const trimmed = value.trim();
+  if (trimmed === "") {
+    return null;
+  }
   const directParse = Number(trimmed);
   if (Number.isFinite(directParse)) {
     return directParse;

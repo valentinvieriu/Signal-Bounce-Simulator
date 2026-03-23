@@ -63,6 +63,10 @@ function StepLocation({ userLocation, onLocationSet }) {
   };
 
   const applyManual = () => {
+    if (fields.latitude === "" || fields.longitude === "") {
+      setStatus("Enter both latitude and longitude.");
+      return;
+    }
     const normalized = normalizeGeoLocation({
       latitude: Number(fields.latitude),
       longitude: Number(fields.longitude),
