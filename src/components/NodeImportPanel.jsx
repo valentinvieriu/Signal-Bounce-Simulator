@@ -62,14 +62,12 @@ export default function NodeImportPanel({
   onUpdateNode,
   onRemoveNode,
   onUpdateReferenceLocation,
+  onLocationFieldsChange,
+  locationFields,
 }) {
   const fileInputRef = useRef(null);
   const [logText, setLogText] = useState("");
   const [importStatus, setImportStatus] = useState("Import CSV-style logs or paste them below to create editable node entries.");
-  const [manualLocation, setManualLocation] = useState(() => ({
-    latitude: referenceLocation?.latitude ?? "",
-    longitude: referenceLocation?.longitude ?? "",
-  }));
 
   const handleLogImport = (inputText) => {
     const result = onImportText(inputText);
@@ -131,53 +129,36 @@ export default function NodeImportPanel({
 
         <div className="grid gap-4 rounded-3xl border border-zinc-100 bg-zinc-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h4 className="text-sm font-semibold text-zinc-950">Reference location</h4>
-              <p className="mt-1 text-xs text-zinc-500">Works on phones through GPS and on desktop through the browser geolocation prompt.</p>
-            </div>
+            <h4 className="text-sm font-semibold text-zinc-950">Reference location</h4>
             <Button onClick={requestCurrentLocation} className="gap-2">
               <Crosshair className="h-4 w-4" />
               Use my location
             </Button>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
             <NumberField
               label="Latitude"
-              value={manualLocation.latitude}
+              value={locationFields.latitude}
               step={0.000001}
-              onChange={(event) => setManualLocation((current) => ({ ...current, latitude: event.target.value }))}
+              onChange={(event) => onLocationFieldsChange({ ...locationFields, latitude: event.target.value })}
             />
             <NumberField
               label="Longitude"
-              value={manualLocation.longitude}
+              value={locationFields.longitude}
               step={0.000001}
-              onChange={(event) => setManualLocation((current) => ({ ...current, longitude: event.target.value }))}
+              onChange={(event) => onLocationFieldsChange({ ...locationFields, longitude: event.target.value })}
             />
-          </div>
-          <div className="flex flex-wrap gap-2">
             <Button
+              className="self-end"
               onClick={() => onUpdateReferenceLocation({
-                latitude: Number(manualLocation.latitude),
-                longitude: Number(manualLocation.longitude),
+                latitude: Number(locationFields.latitude),
+                longitude: Number(locationFields.longitude),
                 source: "manual",
                 label: "Manual location",
-              }, "Manual reference location saved.")}
+              })}
             >
-              Save manual location
+              Save
             </Button>
-            {referenceLocation && (
-              <>
-                <Button
-                  variant="secondary"
-                  onClick={() => setManualLocation({ latitude: referenceLocation.latitude, longitude: referenceLocation.longitude })}
-                >
-                  Copy current reference
-                </Button>
-                <div className="rounded-2xl bg-white px-4 py-2 text-xs text-zinc-600 shadow-sm">
-                  {referenceLocation.latitude}, {referenceLocation.longitude}
-                </div>
-              </>
-            )}
           </div>
           <InfoCard icon={MapPinned}>{locationStatus}</InfoCard>
         </div>

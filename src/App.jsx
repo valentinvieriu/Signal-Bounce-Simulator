@@ -98,7 +98,8 @@ export default function App() {
   const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
   const [referenceLocation, setReferenceLocation] = useState(null);
-  const [locationStatus, setLocationStatus] = useState("Use your GPS on mobile or browser geolocation on desktop to calculate the imported node bearing automatically.");
+  const [locationStatus, setLocationStatus] = useState("Use GPS or enter coordinates manually.");
+  const [locationFields, setLocationFields] = useState({ latitude: "", longitude: "" });
   const [importedNodes, setImportedNodes] = useState([]);
   const [activeNodeId, setActiveNodeId] = useState(null);
   const gyroMode = sim.gyroMode ?? "north";
@@ -150,11 +151,19 @@ export default function App() {
     setSim((currentState) => createNextState(currentState, key, value));
   };
 
+  const activeNodeRef = useRef(activeNode);
+  const referenceLocationRef = useRef(referenceLocation);
+  useEffect(() => { activeNodeRef.current = activeNode; }, [activeNode]);
+  useEffect(() => { referenceLocationRef.current = referenceLocation; }, [referenceLocation]);
+
   const selectActiveNode = useCallback((nodeId) => {
     setActiveNodeId(nodeId);
-    const nextNode = importedNodes.find((node) => node.id === nodeId) ?? null;
-    syncSimulationToNode(nextNode, referenceLocation);
-  }, [importedNodes, referenceLocation, syncSimulationToNode]);
+    setImportedNodes((currentNodes) => {
+      const nextNode = currentNodes.find((node) => node.id === nodeId) ?? null;
+      syncSimulationToNode(nextNode, referenceLocationRef.current);
+      return currentNodes;
+    });
+  }, [syncSimulationToNode]);
 
   const handleImportText = useCallback((text) => {
     const parsedNodes = extractNodeLogs(text);
@@ -162,56 +171,79 @@ export default function App() {
       return { imported: 0, message: "No valid node rows were found in the uploaded log." };
     }
 
-    const knownIds = new Set(importedNodes.map((node) => node.id));
-    const uniqueNodes = parsedNodes.filter((node) => !knownIds.has(node.id));
+    let result;
+    setImportedNodes((currentNodes) => {
+      const knownIds = new Set(currentNodes.map((node) => node.id));
+      const uniqueNodes = parsedNodes.filter((node) => !knownIds.has(node.id));
 
-    if (!uniqueNodes.length) {
-      return { imported: 0, message: "Those node rows are already loaded." };
-    }
+      if (!uniqueNodes.length) {
+        result = { imported: 0, message: "Those node rows are already loaded." };
+        return currentNodes;
+      }
 
-    setImportedNodes((currentNodes) => [...currentNodes, ...uniqueNodes]);
+      result = {
+        imported: uniqueNodes.length,
+        message: `Imported ${uniqueNodes.length} node${uniqueNodes.length === 1 ? "" : "s"} from the log.`,
+      };
 
-    if (!activeNodeId) {
-      setActiveNodeId(uniqueNodes[0].id);
-      syncSimulationToNode(uniqueNodes[0], referenceLocation);
-    }
+      setActiveNodeId((currentActiveId) => {
+        if (!currentActiveId) {
+          syncSimulationToNode(uniqueNodes[0], referenceLocationRef.current);
+          return uniqueNodes[0].id;
+        }
+        return currentActiveId;
+      });
 
-    return {
-      imported: uniqueNodes.length,
-      message: `Imported ${uniqueNodes.length} node${uniqueNodes.length === 1 ? "" : "s"} from the log.`,
-    };
-  }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
+      return [...currentNodes, ...uniqueNodes];
+    });
+
+    return result;
+  }, [syncSimulationToNode]);
 
   const updateNode = useCallback((nodeId, updates) => {
-    const nextNodes = importedNodes.map((node) => (node.id === nodeId ? { ...node, ...updates } : node));
-    const nextActiveNode = nextNodes.find((node) => node.id === activeNodeId) ?? null;
-    setImportedNodes(nextNodes);
-    syncSimulationToNode(nextActiveNode, referenceLocation);
-  }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
+    setImportedNodes((currentNodes) => {
+      const nextNodes = currentNodes.map((node) => (node.id === nodeId ? { ...node, ...updates } : node));
+      setActiveNodeId((currentActiveId) => {
+        const nextActiveNode = nextNodes.find((node) => node.id === currentActiveId) ?? null;
+        syncSimulationToNode(nextActiveNode, referenceLocationRef.current);
+        return currentActiveId;
+      });
+      return nextNodes;
+    });
+  }, [syncSimulationToNode]);
 
   const removeNode = useCallback((nodeId) => {
-    const nextNodes = importedNodes.filter((node) => node.id !== nodeId);
-    const nextActiveNode = activeNodeId === nodeId
-      ? (nextNodes[0] ?? null)
-      : (nextNodes.find((node) => node.id === activeNodeId) ?? null);
+    setImportedNodes((currentNodes) => {
+      const nextNodes = currentNodes.filter((node) => node.id !== nodeId);
+      setActiveNodeId((currentActiveId) => {
+        const nextActiveNode = currentActiveId === nodeId
+          ? (nextNodes[0] ?? null)
+          : (nextNodes.find((node) => node.id === currentActiveId) ?? null);
+        syncSimulationToNode(nextActiveNode, referenceLocationRef.current);
+        return nextActiveNode?.id ?? null;
+      });
+      return nextNodes;
+    });
+  }, [syncSimulationToNode]);
 
-    setImportedNodes(nextNodes);
-    setActiveNodeId(nextActiveNode?.id ?? null);
-    syncSimulationToNode(nextActiveNode, referenceLocation);
-  }, [activeNodeId, importedNodes, referenceLocation, syncSimulationToNode]);
+  const applyReferenceLocation = useCallback((normalized) => {
+    setReferenceLocation(normalized);
+    referenceLocationRef.current = normalized;
+    setLocationFields({ latitude: normalized.latitude, longitude: normalized.longitude });
+    syncSimulationToNode(activeNodeRef.current, normalized);
+  }, [syncSimulationToNode]);
 
-  const updateReferenceLocation = useCallback((location, sourceMessage) => {
+  const updateReferenceLocation = useCallback((location) => {
     const normalized = normalizeGeoLocation(location);
     if (!normalized) {
       setLocationStatus("Enter a valid latitude and longitude to calculate node bearings.");
       return false;
     }
 
-    setReferenceLocation(normalized);
-    setLocationStatus(sourceMessage ?? `Reference location ready at ${normalized.latitude}, ${normalized.longitude}.`);
-    syncSimulationToNode(activeNode, normalized);
+    applyReferenceLocation(normalized);
+    setLocationStatus(`Reference location set to ${normalized.latitude}, ${normalized.longitude}.`);
     return true;
-  }, [activeNode, syncSimulationToNode]);
+  }, [applyReferenceLocation]);
 
   const requestCurrentLocation = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -235,18 +267,17 @@ export default function App() {
           return;
         }
 
-        setReferenceLocation(normalized);
+        applyReferenceLocation(normalized);
         setLocationStatus(
-          `Using ${normalized.label.toLowerCase()} from the browser GPS/geolocation API${normalized.accuracy ? ` (±${Math.round(normalized.accuracy)} m)` : ""}.`,
+          `Using GPS/geolocation${normalized.accuracy ? ` (±${Math.round(normalized.accuracy)} m)` : ""}.`,
         );
-        syncSimulationToNode(activeNode, normalized);
       },
       (error) => {
         setLocationStatus(`Location request failed: ${error.message}`);
       },
       { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 },
     );
-  }, [activeNode, syncSimulationToNode]);
+  }, [applyReferenceLocation]);
 
   return (
     <div className="min-h-screen bg-[#ececec] font-sans text-zinc-950">
@@ -276,12 +307,14 @@ export default function App() {
               activeNodeMetrics={activeNodeMetrics}
               referenceLocation={referenceLocation}
               locationStatus={locationStatus}
+              locationFields={locationFields}
               requestCurrentLocation={requestCurrentLocation}
               onImportText={handleImportText}
               onSelectNode={selectActiveNode}
               onUpdateNode={updateNode}
               onRemoveNode={removeNode}
               onUpdateReferenceLocation={updateReferenceLocation}
+              onLocationFieldsChange={setLocationFields}
             />
           </div>
           <MapView
