@@ -7,6 +7,7 @@ import {
   shortestDelta,
   distance,
   createDefaultSimulationState,
+  buildBeamVisualization,
   extractNodeLogs,
   getAlignmentProfile,
   getGeoMetrics,
@@ -262,6 +263,43 @@ describe("traceRay", () => {
     });
     // Local bearing 0 + forward 90 = true bearing 90
     expect(result.finalTrueBearing).toBeCloseTo(90);
+  });
+
+  it("preserves the law of reflection at vertical walls", () => {
+    const result = traceRay({
+      ...baseParams,
+      origin: { x: 60, y: 11 },
+      bearingLocalDeg: 45,
+      maxReflections: 2,
+    });
+
+    expect(result.interactions[0]).toMatchObject({
+      wall: "right",
+      type: "reflect",
+    });
+    expect(result.interactions[0].incomingBearingDeg).toBeCloseTo(45);
+    expect(result.interactions[0].outgoingBearingDeg).toBeCloseTo(315);
+  });
+});
+
+describe("buildBeamVisualization", () => {
+  it("creates interior wavefront cells that follow sampled reflected rays", () => {
+    const beam = buildBeamVisualization({
+      origin: { x: 34, y: 11 },
+      centerBearingLocalDeg: 0,
+      beamSpreadDeg: 60,
+      width: 68,
+      depth: 22,
+      maxReflections: 2,
+      escapeDistanceUnits: 20,
+      forwardBearingDeg: 0,
+      surfaces: { top: "reflect", right: "reflect", bottom: "pass", left: "reflect" },
+    });
+
+    expect(beam.sampleCount).toBeGreaterThanOrEqual(7);
+    expect(beam.wavefronts.length).toBeGreaterThan(0);
+    expect(beam.cells.length).toBeGreaterThan(0);
+    expect(beam.rays.some((ray) => ray.result.interactions.some((interaction) => interaction.type === "reflect"))).toBe(true);
   });
 });
 

@@ -74,6 +74,9 @@ const ALIGNMENT_PALETTES = {
 };
 
 const EARTH_RADIUS_M = 6371000;
+const BEAM_SAMPLE_MIN = 7;
+const BEAM_SAMPLE_MAX = 19;
+const BEAM_SLICE_TARGET = 26;
 
 export const DEFAULTS = {
   gyroMode: "north",
@@ -351,11 +354,17 @@ export function getSimulationTelemetry(sim) {
   const guideRays = alignment.visualGuideOffsets.map((offsetDeg) => (
     traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + offsetDeg })
   ));
+  const beam = buildBeamVisualization({
+    ...sharedParams,
+    centerBearingLocalDeg: localAntennaDirection,
+    beamSpreadDeg: beamSpread,
+  });
 
   return {
     escapeDistance,
     localAntennaDirection,
     rays: { main, left, right, guide: guideRays },
+    beam,
     alignmentError,
     alignment,
     isAligned: main.didExit && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,
@@ -443,6 +452,8 @@ export function traceRay({
   let exitedVia = null;
   let didExit = false;
   const points = [{ x, y }];
+  const segments = [];
+  const interactions = [];
 
   for (let step = 0; step < 48; step += 1) {
     const hits = [
@@ -460,14 +471,44 @@ export function traceRay({
       break;
     }
 
+    const start = { x, y };
     x += dx * hit.t;
     y += dy * hit.t;
-    points.push({ x, y });
+    const hitPoint = { x, y };
+    const incomingLocalBearing = norm360(radToDeg(Math.atan2(dx, -dy)));
+    const surfaceBearingDeg = hit.wall === "left" || hit.wall === "right" ? 0 : 90;
+    const surfaceDelta = Math.abs(shortestDelta(incomingLocalBearing, surfaceBearingDeg));
+    const incomingAngleToSurfaceDeg = surfaceDelta > 90 ? 180 - surfaceDelta : surfaceDelta;
+
+    segments.push({
+      start,
+      end: hitPoint,
+      length: distance(start, hitPoint),
+      kind: "interior",
+      wall: hit.wall,
+    });
+    points.push(hitPoint);
 
     if (surfaces[hit.wall] === "pass" || reflectionsUsed >= maxReflections) {
-      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits });
+      const exitPoint = { x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits };
+      segments.push({
+        start: hitPoint,
+        end: exitPoint,
+        length: distance(hitPoint, exitPoint),
+        kind: "exterior",
+        wall: hit.wall,
+      });
+      points.push(exitPoint);
       exitedVia = hit.wall;
       didExit = true;
+      interactions.push({
+        point: hitPoint,
+        wall: hit.wall,
+        type: surfaces[hit.wall] === "pass" ? "pass" : "limit",
+        incomingBearingDeg: incomingLocalBearing,
+        outgoingBearingDeg: incomingLocalBearing,
+        angleToSurfaceDeg: incomingAngleToSurfaceDeg,
+      });
       break;
     }
 
@@ -477,20 +518,186 @@ export function traceRay({
     } else {
       dy = -dy;
     }
+
+    const outgoingLocalBearing = norm360(radToDeg(Math.atan2(dx, -dy)));
+    interactions.push({
+      point: hitPoint,
+      wall: hit.wall,
+      type: "reflect",
+      incomingBearingDeg: incomingLocalBearing,
+      outgoingBearingDeg: outgoingLocalBearing,
+      angleToSurfaceDeg: incomingAngleToSurfaceDeg,
+    });
   }
 
   const pathDistanceUnits = points.reduce(
     (accumulator, point, index, allPoints) => accumulator + (index ? distance(allPoints[index - 1], point) : 0),
     0,
   );
+  const interiorPathDistanceUnits = segments
+    .filter((segment) => segment.kind === "interior")
+    .reduce((accumulator, segment) => accumulator + segment.length, 0);
   const finalLocalBearing = norm360(radToDeg(Math.atan2(dx, -dy)));
 
   return {
     points,
+    segments,
+    interactions,
     finalTrueBearing: norm360(finalLocalBearing + forwardBearingDeg),
     pathDistanceUnits,
+    interiorPathDistanceUnits,
     exitedVia,
     reflectionsUsed,
     didExit,
+  };
+}
+
+function getBeamSampleCount(beamSpreadDeg) {
+  const scaled = clamp(Math.round(beamSpreadDeg / 10) + 5, BEAM_SAMPLE_MIN, BEAM_SAMPLE_MAX);
+  return scaled % 2 === 0 ? scaled + 1 : scaled;
+}
+
+function getBeamSampleOffsets(beamSpreadDeg) {
+  const sampleCount = getBeamSampleCount(beamSpreadDeg);
+  const halfSpread = beamSpreadDeg / 2;
+
+  if (sampleCount === 1 || halfSpread === 0) {
+    return [0];
+  }
+
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const ratio = index / (sampleCount - 1);
+    return -halfSpread + ratio * beamSpreadDeg;
+  });
+}
+
+function getPointAlongSegments(segments, distanceUnits) {
+  if (!segments.length) {
+    return null;
+  }
+
+  if (distanceUnits <= 0) {
+    return { ...segments[0].start };
+  }
+
+  let remainingDistance = distanceUnits;
+
+  for (const segment of segments) {
+    if (remainingDistance <= segment.length) {
+      const ratio = segment.length === 0 ? 0 : remainingDistance / segment.length;
+      return {
+        x: segment.start.x + (segment.end.x - segment.start.x) * ratio,
+        y: segment.start.y + (segment.end.y - segment.start.y) * ratio,
+      };
+    }
+
+    remainingDistance -= segment.length;
+  }
+
+  return { ...segments.at(-1).end };
+}
+
+function createWavefrontCell(startA, endA, endB, startB) {
+  const area =
+    Math.abs(
+      startA.x * endA.y - startA.y * endA.x +
+      endA.x * endB.y - endA.y * endB.x +
+      endB.x * startB.y - endB.y * startB.x +
+      startB.x * startA.y - startB.y * startA.x,
+    ) / 2;
+
+  if (area < 1e-4) {
+    return null;
+  }
+
+  return [startA, endA, endB, startB];
+}
+
+export function buildBeamVisualization({
+  origin,
+  centerBearingLocalDeg,
+  beamSpreadDeg,
+  width,
+  depth,
+  maxReflections,
+  escapeDistanceUnits,
+  forwardBearingDeg,
+  surfaces,
+}) {
+  const offsets = getBeamSampleOffsets(beamSpreadDeg);
+  const sampleRays = offsets.map((offsetDeg) => {
+    const result = traceRay({
+      origin,
+      bearingLocalDeg: centerBearingLocalDeg + offsetDeg,
+      width,
+      depth,
+      maxReflections,
+      escapeDistanceUnits,
+      forwardBearingDeg,
+      surfaces,
+    });
+
+    return {
+      offsetDeg,
+      result,
+      interiorSegments: result.segments.filter((segment) => segment.kind === "interior"),
+    };
+  });
+
+  const maxInteriorDistance = sampleRays.reduce(
+    (maxDistance, ray) => Math.max(maxDistance, ray.result.interiorPathDistanceUnits),
+    0,
+  );
+  const sliceStepUnits = clamp(maxInteriorDistance / BEAM_SLICE_TARGET, 0.5, 12);
+  const wavefronts = [];
+  const cells = [];
+
+  for (let sliceStart = 0; sliceStart < maxInteriorDistance; sliceStart += sliceStepUnits) {
+    const sliceEnd = Math.min(sliceStart + sliceStepUnits, maxInteriorDistance);
+    const frontStart = [];
+    const frontEnd = [];
+
+    sampleRays.forEach((ray) => {
+      const startPoint =
+        sliceStart <= ray.result.interiorPathDistanceUnits
+          ? getPointAlongSegments(ray.interiorSegments, sliceStart)
+          : null;
+      const endPoint =
+        sliceEnd <= ray.result.interiorPathDistanceUnits
+          ? getPointAlongSegments(ray.interiorSegments, sliceEnd)
+          : null;
+
+      frontStart.push(startPoint);
+      frontEnd.push(endPoint);
+    });
+
+    const wavefront = frontEnd.filter(Boolean);
+    if (wavefront.length >= 2) {
+      wavefronts.push(wavefront);
+    }
+
+    for (let index = 0; index < sampleRays.length - 1; index += 1) {
+      const startA = frontStart[index];
+      const endA = frontEnd[index];
+      const endB = frontEnd[index + 1];
+      const startB = frontStart[index + 1];
+
+      if (!startA || !endA || !endB || !startB) {
+        continue;
+      }
+
+      const cell = createWavefrontCell(startA, endA, endB, startB);
+      if (cell) {
+        cells.push(cell);
+      }
+    }
+  }
+
+  return {
+    sampleCount: sampleRays.length,
+    sliceStepUnits,
+    rays: sampleRays,
+    wavefronts,
+    cells,
   };
 }
