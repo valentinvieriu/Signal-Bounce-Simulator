@@ -7,6 +7,8 @@ import {
   shortestDelta,
   distance,
   createDefaultSimulationState,
+  getBeamRays,
+  getBeamSampleOffsets,
   extractNodeLogs,
   getAlignmentProfile,
   getGeoMetrics,
@@ -100,6 +102,17 @@ describe("smoothstep", () => {
   it("handles degenerate ranges when both edges are the same", () => {
     expect(smoothstep(10, 10, 9)).toBe(0);
     expect(smoothstep(10, 10, 10)).toBe(1);
+  });
+});
+
+
+describe("getBeamSampleOffsets", () => {
+  it("returns symmetric offsets spanning the requested spread", () => {
+    expect(getBeamSampleOffsets(60)).toEqual([-30, -22.5, -15, -7.5, 0, 7.5, 15, 22.5, 30]);
+  });
+
+  it("returns a single center sample for zero spread", () => {
+    expect(getBeamSampleOffsets(0)).toEqual([0]);
   });
 });
 
@@ -459,5 +472,32 @@ SeqNo, Latitude, Longitude, Altitude, Sats, Speed, Heading, SNR, Timestamp
 
     expect(metrics.distanceKm).toBeCloseTo(6.96, 1);
     expect(metrics.bearing).toBeCloseTo(27.0, 1);
+  });
+});
+
+
+describe("getBeamRays", () => {
+  const baseParams = {
+    origin: { x: 34, y: 11 },
+    width: 68,
+    depth: 22,
+    maxReflections: 2,
+    escapeDistanceUnits: 20,
+    forwardBearingDeg: 0,
+    surfaces: { top: "reflect", right: "reflect", bottom: "reflect", left: "reflect" },
+  };
+
+  it("samples a beam symmetrically and marks the center ray", () => {
+    const beam = getBeamRays({
+      ...baseParams,
+      beamSpread: 60,
+      bearingLocalDeg: 0,
+    });
+
+    expect(beam).toHaveLength(9);
+    expect(beam[0].offsetDeg).toBe(-30);
+    expect(beam[4].offsetDeg).toBe(0);
+    expect(beam[4].isCenter).toBe(true);
+    expect(beam.at(-1)?.offsetDeg).toBe(30);
   });
 });

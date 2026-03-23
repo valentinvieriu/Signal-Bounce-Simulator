@@ -312,6 +312,35 @@ export function getGeoMetrics(referenceLocation, nodeLocation) {
   };
 }
 
+export function getBeamSampleOffsets(beamSpread) {
+  const normalizedSpread = Math.max(beamSpread, 0);
+  const sampleCount =
+    normalizedSpread >= 140 ? 17
+      : normalizedSpread >= 90 ? 13
+        : normalizedSpread >= 30 ? 9
+          : 7;
+
+  if (sampleCount === 1 || normalizedSpread === 0) {
+    return [0];
+  }
+
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const ratio = index / (sampleCount - 1);
+    return -normalizedSpread / 2 + normalizedSpread * ratio;
+  });
+}
+
+export function getBeamRays({ beamSpread, bearingLocalDeg, ...sharedParams }) {
+  const sampleOffsets = getBeamSampleOffsets(beamSpread);
+
+  return sampleOffsets.map((offsetDeg, index) => ({
+    key: `beam-${index}`,
+    offsetDeg,
+    isCenter: Math.abs(offsetDeg) < 1e-9,
+    ray: traceRay({ ...sharedParams, bearingLocalDeg: bearingLocalDeg + offsetDeg }),
+  }));
+}
+
 export function getSimulationTelemetry(sim) {
   const {
     antenna,
@@ -341,6 +370,7 @@ export function getSimulationTelemetry(sim) {
   const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
   const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
   const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
+  const beam = getBeamRays({ ...sharedParams, beamSpread, bearingLocalDeg: localAntennaDirection });
   const signedAlignmentError = main.didExit ? shortestDelta(main.finalTrueBearing, targetBearing) : null;
   const alignmentError = signedAlignmentError === null ? null : Math.abs(signedAlignmentError);
   const alignment = getAlignmentProfile({
@@ -355,7 +385,7 @@ export function getSimulationTelemetry(sim) {
   return {
     escapeDistance,
     localAntennaDirection,
-    rays: { main, left, right, guide: guideRays },
+    rays: { main, left, right, beam, guide: guideRays },
     alignmentError,
     alignment,
     isAligned: main.didExit && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,

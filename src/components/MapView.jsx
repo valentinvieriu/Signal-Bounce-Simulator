@@ -58,6 +58,10 @@ function getFirstSegmentPoints(result) {
   return result.points.slice(0, Math.min(result.points.length, 2));
 }
 
+function getReflectionPoints(result) {
+  return result.points.slice(1, 1 + result.reflectionsUsed);
+}
+
 const MotionCircle = motion.circle;
 
 export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode }) {
@@ -122,7 +126,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
   const gridPx = (mapW / widthUnits) * gridStep;
 
   const { alignment, escapeDistance, localAntennaDirection, rays, alignmentError, isAligned } = telemetry;
-  const { main, left, right, guide } = rays;
+  const { main, left, right, beam, guide } = rays;
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
   const wallSegments = useMemo(() => getWallSegments({ mapX, mapY, mapW, mapH }), [mapH, mapW, mapX, mapY]);
 
@@ -155,6 +159,9 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
       "Z",
     ].join(" ");
   };
+  const createBeamSamplePath = (sample) => createPath(sample.ray, "interior");
+  const reflectionPoints = getReflectionPoints(main);
+  const beamLabel = `${beam.length} sampled rays`;
   const alignmentPalette = getAlignmentPalette(alignment.state);
 
   const summaryCards = [
@@ -165,6 +172,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
     { label: "Reflections", value: String(main.reflectionsUsed) },
     { label: "Alignment error", value: alignmentError !== null ? `${alignmentError.toFixed(1)}°` : "—" },
     { label: "Alignment potential", value: `${Math.round(alignment.score * 100)}%`, accent: alignment.score >= 0.7 },
+    { label: "Beam envelope", value: beamLabel },
   ];
 
   return (
@@ -253,7 +261,24 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               strokeDasharray="8 8"
               opacity="0.65"
             />
-            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.18 + alignment.approachScore * 0.18} />
+            <path d={createConePath()} fill={alignmentPalette.fill} opacity={0.16 + alignment.approachScore * 0.14} />
+            {beam.map((sample, index) => {
+              const normalizedDistance = beam.length <= 1 ? 0.5 : index / (beam.length - 1);
+              const emphasis = 1 - Math.abs(normalizedDistance - 0.5) * 2;
+
+              return (
+                <path
+                  key={sample.key}
+                  d={createBeamSamplePath(sample)}
+                  fill="none"
+                  stroke={sample.isCenter ? alignmentPalette.stroke : alignmentPalette.edge}
+                  strokeWidth={sample.isCenter ? 4 : 1.2 + emphasis * 0.9}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={sample.isCenter ? 0.92 : 0.14 + emphasis * 0.2}
+                />
+              );
+            })}
             <path d={createPathFromPoints(getFirstSegmentPoints(left))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
             <path d={createPathFromPoints(getFirstSegmentPoints(right))} fill="none" stroke={alignmentPalette.edge} strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" opacity="0.72" />
             {guide.map((result, index) => (
@@ -268,12 +293,29 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
                 opacity={0.16 + alignment.score * 0.2}
               />
             ))}
-            <path d={createPath(main, "interior")} fill="none" stroke={alignmentPalette.main} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+            {reflectionPoints.map((point, index) => (
+              <g key={`reflection-${index}`}>
+                <circle
+                  cx={scaleX(point.x)}
+                  cy={scaleY(point.y)}
+                  r="9"
+                  fill={alignmentPalette.glow}
+                  pointerEvents="none"
+                />
+                <circle
+                  cx={scaleX(point.x)}
+                  cy={scaleY(point.y)}
+                  r="3.5"
+                  fill={alignmentPalette.stroke}
+                  pointerEvents="none"
+                />
+              </g>
+            ))}
             {main.didExit && (
               <path
                 d={createPath(main, "exterior")}
                 fill="none"
-                stroke={alignmentPalette.main}
+                stroke={alignmentPalette.stroke}
                 strokeWidth="3"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -407,7 +449,7 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
               <StatCard key={card.label} label={card.label} value={card.value} accent={card.accent} />
             ))}
             <InfoCard icon={Waves} iconClassName="text-blue-500">
-              Target lock now uses three zones: a green lock core, the main cone body, and a feathered entry band that starts reacting before full alignment.
+              Beam spread is now drawn as sampled specular rays, so each bounce mirrors off the wall with the same incident and reflection angle instead of faking a post-bounce cone.
             </InfoCard>
             {MAP_TIPS.map((tip) => (
               <InfoCard key={tip.label} icon={tip.icon === "move" ? Move : Waves} iconClassName={tip.tone}>
