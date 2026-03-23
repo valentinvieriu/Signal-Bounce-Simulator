@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
 
+import { MapPinned } from "lucide-react";
+
 import { COMPASS_MARKERS, degToRad, getAlignmentPalette, norm360, radToDeg } from "../lib/simulation";
 import { Button, SliderRow, Switch } from "./ui";
 
@@ -32,7 +34,7 @@ function CompassMarkerCard({ label, value, color, description }) {
   );
 }
 
-export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported, telemetry, gyroMode }) {
+export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported, telemetry, gyroMode, onOpenImportWizard }) {
   const { distanceKm, forwardBearing, targetBearing, antennaDirection } = sim;
   const { alignment, alignmentError, isAligned } = telemetry;
   const size = 330;
@@ -403,6 +405,10 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               }}
             >
               Reset compass
+            </Button>
+            <Button variant="secondary" onClick={onOpenImportWizard} className="gap-2">
+              <MapPinned className="h-4 w-4" />
+              Import node location
             </Button>
           </div>
         </div>
