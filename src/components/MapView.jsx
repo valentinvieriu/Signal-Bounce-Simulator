@@ -57,7 +57,8 @@ function getExteriorPoints(result) {
 
 function getMainBouncePoints(result) {
   if (result.points.length < 2) return [];
-  return result.didExit ? result.points.slice(1, -1) : result.points.slice(1);
+  const interior = result.didExit ? result.points.slice(1, -1) : result.points.slice(1);
+  return interior.filter((p) => !p.isTerminal);
 }
 
 const MotionCircle = motion.circle;

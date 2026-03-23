@@ -466,9 +466,11 @@ export function traceRay({
 
     x += dx * hit.t;
     y += dy * hit.t;
-    points.push({ x, y, wall: hit.wall });
 
-    if (surfaces[hit.wall] === "pass" || reflectionsUsed >= maxReflections) {
+    const isTerminal = surfaces[hit.wall] === "pass" || reflectionsUsed >= maxReflections;
+    points.push({ x, y, wall: hit.wall, isTerminal });
+
+    if (isTerminal) {
       points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true });
       exitedVia = hit.wall;
       didExit = true;
@@ -517,7 +519,15 @@ export function buildBeamSegments(leftRay, rightRay) {
       break;
     }
 
-    const isExterior = !!(leftTo.isExit || rightTo.isExit);
+    // If only one edge has exited while the other continues bouncing,
+    // the cone is no longer coherent — stop pairing.
+    const leftExited = !!(leftTo.isExit);
+    const rightExited = !!(rightTo.isExit);
+    if (leftExited !== rightExited) {
+      break;
+    }
+
+    const isExterior = leftExited || rightExited;
 
     segments.push({
       index: i,
