@@ -284,6 +284,8 @@ describe("getSimulationTelemetry", () => {
     expect(telemetry.isAligned).toBe(true);
     expect(telemetry.alignment.state).toBe("locked");
     expect(telemetry.alignment.score).toBeCloseTo(1);
+    expect(telemetry.rays.beamSamples.length).toBeGreaterThanOrEqual(7);
+    expect(telemetry.rays.beamSamples.some((sample) => sample.offsetDeg === 0)).toBe(true);
   });
 
   it("returns non-aligned telemetry when the exit bearing misses the target", () => {
@@ -316,6 +318,21 @@ describe("getSimulationTelemetry", () => {
 
     expect(telemetry.alignment.state).toBe("converging");
     expect(telemetry.isAligned).toBe(false);
+  });
+
+  it("increases beam sample density when spread and bounce count increase", () => {
+    const narrow = getSimulationTelemetry({
+      ...createDefaultSimulationState(),
+      beamSpread: 20,
+      wallBounces: 0,
+    });
+    const wide = getSimulationTelemetry({
+      ...createDefaultSimulationState(),
+      beamSpread: 120,
+      wallBounces: 4,
+    });
+
+    expect(wide.rays.beamSamples.length).toBeGreaterThan(narrow.rays.beamSamples.length);
   });
 });
 

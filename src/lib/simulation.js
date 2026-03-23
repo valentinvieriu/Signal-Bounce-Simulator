@@ -19,6 +19,8 @@ const ALIGNMENT_CONE_WEIGHT = 0.75;
 const ALIGNMENT_APPROACH_WEIGHT = 0.25;
 const ALIGNMENT_FOCUS_BASE = 0.92;
 const ALIGNMENT_FOCUS_SCORE_MULTIPLIER = 0.56;
+const MIN_BEAM_SAMPLE_COUNT = 7;
+const MAX_BEAM_SAMPLE_COUNT = 21;
 const ALIGNMENT_GUIDE_PATTERNS = [
   { minScore: 0.92, pattern: [-0.85, -0.35, 0.35, 0.85] },
   { minScore: 0.7, pattern: [-0.75, 0, 0.75] },
@@ -341,6 +343,12 @@ export function getSimulationTelemetry(sim) {
   const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
   const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
   const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
+  const beamSamples = createBeamSamples({
+    beamSpread,
+    localAntennaDirection,
+    wallBounces,
+    trace: (offsetDeg) => traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + offsetDeg }),
+  });
   const signedAlignmentError = main.didExit ? shortestDelta(main.finalTrueBearing, targetBearing) : null;
   const alignmentError = signedAlignmentError === null ? null : Math.abs(signedAlignmentError);
   const alignment = getAlignmentProfile({
@@ -355,11 +363,37 @@ export function getSimulationTelemetry(sim) {
   return {
     escapeDistance,
     localAntennaDirection,
-    rays: { main, left, right, guide: guideRays },
+    rays: { main, left, right, guide: guideRays, beamSamples },
     alignmentError,
     alignment,
     isAligned: main.didExit && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,
   };
+}
+
+function createBeamSamples({ beamSpread, localAntennaDirection, wallBounces, trace }) {
+  const halfSpread = Math.max(beamSpread / 2, 1);
+  const densityFromSpread = Math.ceil(beamSpread / 10);
+  const densityFromReflections = wallBounces * 2;
+  const targetCount = clamp(
+    densityFromSpread + densityFromReflections + 1,
+    MIN_BEAM_SAMPLE_COUNT,
+    MAX_BEAM_SAMPLE_COUNT,
+  );
+  const sampleCount = targetCount % 2 === 0 ? targetCount + 1 : targetCount;
+
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const ratio = sampleCount === 1 ? 0 : index / (sampleCount - 1);
+    const offsetDeg = -halfSpread + ratio * beamSpread;
+    const normalizedOffset = halfSpread === 0 ? 0 : Math.abs(offsetDeg) / halfSpread;
+    const intensity = 1 - normalizedOffset ** 1.35;
+
+    return {
+      key: `${localAntennaDirection.toFixed(3)}-${offsetDeg.toFixed(3)}-${index}`,
+      offsetDeg,
+      intensity: clamp(intensity, 0.2, 1),
+      result: trace(offsetDeg),
+    };
+  });
 }
 
 export function getAlignmentProfile({ beamSpread, didExit, signedError }) {
