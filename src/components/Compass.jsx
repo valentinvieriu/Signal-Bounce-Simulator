@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
 
+import { MapPinned } from "lucide-react";
+
 import { COMPASS_MARKERS, degToRad, getAlignmentPalette, norm360, radToDeg } from "../lib/simulation";
-import { Button, Label, NumberField, SliderRow, Switch } from "./ui";
+import { Button, SliderRow, Switch } from "./ui";
 
 function getArcPoint(radius, arcRadius, bearing) {
   return {
@@ -32,7 +34,7 @@ function CompassMarkerCard({ label, value, color, description }) {
   );
 }
 
-export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported, telemetry, gyroMode }) {
+export default function Compass({ sim, updateSim, useCompass, setUseCompass, heading, supported, telemetry, gyroMode, onOpenImportWizard }) {
   const { distanceKm, forwardBearing, targetBearing, antennaDirection } = sim;
   const { alignment, alignmentError, isAligned } = telemetry;
   const size = 330;
@@ -42,6 +44,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
   const [drag, setDrag] = useState(null); // { mode, pointerId }
   const gyroControlsNorth = useCompass && gyroMode === "north";
   const gyroControlsAntenna = useCompass && gyroMode === "antenna";
+  const distanceSliderMax = Math.max(20, Math.ceil(distanceKm));
 
   const pointToAngle = (clientX, clientY) => {
     const rect = dialRef.current?.getBoundingClientRect();
@@ -73,9 +76,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
 
   const targetSweepStart = norm360(targetBearing - forwardBearing);
   const targetSweepEnd = norm360(antennaDirection - forwardBearing);
-  const sweepDelta = ((targetSweepEnd - targetSweepStart + 540) % 360) - 180;
-  // Draw the shortest arc from target bearing to antenna bearing so the radar shows how far apart they are.
-  const sweep = sweepDelta;
+  const sweep = ((targetSweepEnd - targetSweepStart + 540) % 360) - 180;
   const sweepRadius = radius - 98;
   const sweepDirection = sweep >= 0 ? 1 : 0;
   const sweepStart = getArcPoint(radius, sweepRadius, targetSweepStart);
@@ -93,7 +94,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
       <div className="space-y-6 p-6 md:p-7">
         <div>
           <h2 className="text-3xl font-semibold tracking-tight text-black">Compass</h2>
-          <p className="mt-1 text-sm text-zinc-500">Preview target bearing, and antenna direction.</p>
+          <p className="mt-1 text-sm text-zinc-500">Preview target bearing and antenna direction.</p>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
@@ -284,9 +285,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
 
             {draggableHandles.map((handle) => (
               <g key={handle.id}>
-                {/* Visible fill */}
                 <circle cx={handle.x} cy={handle.y} r="16" fill={handle.fill} pointerEvents="none" />
-                {/* Invisible enlarged hit target */}
                 <circle
                   cx={handle.x}
                   cy={handle.y}
@@ -301,7 +300,6 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
                     dialRef.current?.setPointerCapture(event.pointerId);
                   }}
                 />
-                {/* Inner dot */}
                 <circle cx={handle.x} cy={handle.y} r="6" fill={handle.dot} pointerEvents="none" />
               </g>
             ))}
@@ -342,6 +340,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               <p className="mt-1 text-lg font-semibold text-zinc-900">±{alignment.featherThreshold.toFixed(1)}°</p>
             </div>
           </div>
+
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-zinc-900">Use gyroscope</p>
@@ -353,6 +352,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
             </div>
             <Switch checked={useCompass} onCheckedChange={setUseCompass} />
           </div>
+
           {useCompass && (
             <div className="flex items-center justify-between rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-xs text-sky-800">
               <span className="font-medium">
@@ -361,6 +361,7 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               <span>Tap compass to toggle</span>
             </div>
           )}
+
           <div className="space-y-4 rounded-3xl border border-zinc-100 bg-white p-4 shadow-sm">
             <SliderRow
               label="Forward bearing"
@@ -379,19 +380,23 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               max={359}
               disabled={gyroControlsAntenna}
             />
+            <SliderRow
+              label="Node distance"
+              value={distanceKm}
+              onChange={(value) => updateSim("distanceKm", value)}
+              min={0}
+              max={distanceSliderMax}
+              step={0.01}
+              unit="km"
+            />
           </div>
-          <NumberField
-            label="Node distance (km)"
-            value={distanceKm}
-            min={0}
-            step={0.01}
-            onChange={(event) => updateSim("distanceKm", Math.max(0, Number(event.target.value) || 0))}
-          />
+
           <div className="text-xs text-zinc-500">
             {supported
               ? `Live heading ${heading !== null ? `${Math.round(heading)}°` : "waiting…"}${useCompass ? ` · controlling ${gyroMode === "north" ? "north" : "antenna"}` : ""}`
               : "Compass sensor not detected."}
           </div>
+
           <div className="flex flex-wrap gap-2 pt-2">
             <Button
               onClick={() => {
@@ -400,6 +405,10 @@ export default function Compass({ sim, updateSim, useCompass, setUseCompass, hea
               }}
             >
               Reset compass
+            </Button>
+            <Button variant="secondary" onClick={onOpenImportWizard} className="gap-2">
+              <MapPinned className="h-4 w-4" />
+              Import node location
             </Button>
           </div>
         </div>

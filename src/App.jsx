@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import Compass from "./components/Compass";
 import MapView from "./components/MapView";
+import NodeImportWizard from "./components/NodeImportWizard";
 import {
   clamp,
   createDefaultSimulationState,
@@ -93,6 +94,7 @@ function createNextState(currentState, key, value) {
 export default function App() {
   const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
+  const [importWizardOpen, setImportWizardOpen] = useState(false);
   const gyroMode = sim.gyroMode ?? "north";
   const controlledKey = gyroMode === "antenna" ? "antennaDirection" : "forwardBearing";
 
@@ -113,6 +115,11 @@ export default function App() {
     setSim((currentState) => createNextState(currentState, key, value));
   };
 
+  const handleImportComplete = useCallback((targetBearing, distanceKm) => {
+    setSim((current) => ({ ...current, targetBearing, distanceKm }));
+    setImportWizardOpen(false);
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#ececec] font-sans text-zinc-950">
       <div className="mx-auto max-w-[1500px] p-4 md:p-6 xl:p-8">
@@ -123,7 +130,7 @@ export default function App() {
             Configure true north and target node placement. Adjust the transmitter direction and test wall materials to simulate signal paths.
           </p>
         </div>
-        <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
           <Compass
             sim={sim}
             updateSim={updateSim}
@@ -133,6 +140,7 @@ export default function App() {
             supported={supported}
             telemetry={telemetry}
             gyroMode={gyroMode}
+            onOpenImportWizard={() => setImportWizardOpen(true)}
           />
           <MapView
             sim={sim}
@@ -143,6 +151,11 @@ export default function App() {
           />
         </div>
       </div>
+      <NodeImportWizard
+        open={importWizardOpen}
+        onClose={() => setImportWizardOpen(false)}
+        onComplete={handleImportComplete}
+      />
     </div>
   );
 }
