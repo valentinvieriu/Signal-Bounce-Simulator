@@ -19,6 +19,8 @@ const ALIGNMENT_CONE_WEIGHT = 0.75;
 const ALIGNMENT_APPROACH_WEIGHT = 0.25;
 const ALIGNMENT_FOCUS_BASE = 0.92;
 const ALIGNMENT_FOCUS_SCORE_MULTIPLIER = 0.56;
+const BEAM_SAMPLE_MIN = 7;
+const BEAM_SAMPLE_MAX = 17;
 const ALIGNMENT_GUIDE_PATTERNS = [
   { minScore: 0.92, pattern: [-0.85, -0.35, 0.35, 0.85] },
   { minScore: 0.7, pattern: [-0.75, 0, 0.75] },
@@ -341,6 +343,11 @@ export function getSimulationTelemetry(sim) {
   const main = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection });
   const left = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection - beamSpread / 2 });
   const right = traceRay({ ...sharedParams, bearingLocalDeg: localAntennaDirection + beamSpread / 2 });
+  const sampledBeam = sampleBeamRays({
+    ...sharedParams,
+    beamSpread,
+    bearingLocalDeg: localAntennaDirection,
+  });
   const signedAlignmentError = main.didExit ? shortestDelta(main.finalTrueBearing, targetBearing) : null;
   const alignmentError = signedAlignmentError === null ? null : Math.abs(signedAlignmentError);
   const alignment = getAlignmentProfile({
@@ -355,7 +362,16 @@ export function getSimulationTelemetry(sim) {
   return {
     escapeDistance,
     localAntennaDirection,
-    rays: { main, left, right, guide: guideRays },
+    rays: {
+      main,
+      left,
+      right,
+      guide: guideRays,
+      beam: {
+        samples: sampledBeam,
+        exitedCount: sampledBeam.filter((sample) => sample.result.didExit).length,
+      },
+    },
     alignmentError,
     alignment,
     isAligned: main.didExit && alignmentError !== null && alignmentError <= ALIGNMENT_LOCK_THRESHOLD_DEG,
@@ -493,4 +509,49 @@ export function traceRay({
     reflectionsUsed,
     didExit,
   };
+}
+
+export function getBeamSampleCount(beamSpread) {
+  return clamp(Math.round(beamSpread / 12) * 2 + 1, BEAM_SAMPLE_MIN, BEAM_SAMPLE_MAX);
+}
+
+export function getBeamSampleOffsets(beamSpread) {
+  const sampleCount = getBeamSampleCount(beamSpread);
+  const halfSpread = beamSpread / 2;
+
+  if (sampleCount === 1) {
+    return [0];
+  }
+
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const ratio = index / (sampleCount - 1);
+    return -halfSpread + ratio * beamSpread;
+  });
+}
+
+function sampleBeamRays({
+  origin,
+  bearingLocalDeg,
+  width,
+  depth,
+  maxReflections,
+  escapeDistanceUnits,
+  forwardBearingDeg,
+  surfaces,
+  beamSpread,
+}) {
+  return getBeamSampleOffsets(beamSpread).map((offsetDeg, index, allOffsets) => ({
+    offsetDeg,
+    ratio: allOffsets.length === 1 ? 0.5 : index / (allOffsets.length - 1),
+    result: traceRay({
+      origin,
+      bearingLocalDeg: bearingLocalDeg + offsetDeg,
+      width,
+      depth,
+      maxReflections,
+      escapeDistanceUnits,
+      forwardBearingDeg,
+      surfaces,
+    }),
+  }));
 }

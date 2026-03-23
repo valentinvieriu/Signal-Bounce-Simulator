@@ -8,6 +8,8 @@ import {
   distance,
   createDefaultSimulationState,
   extractNodeLogs,
+  getBeamSampleCount,
+  getBeamSampleOffsets,
   getAlignmentProfile,
   getGeoMetrics,
   getResetCompassState,
@@ -284,6 +286,8 @@ describe("getSimulationTelemetry", () => {
     expect(telemetry.isAligned).toBe(true);
     expect(telemetry.alignment.state).toBe("locked");
     expect(telemetry.alignment.score).toBeCloseTo(1);
+    expect(telemetry.rays.beam.samples.length).toBe(getBeamSampleCount(30));
+    expect(telemetry.rays.beam.exitedCount).toBe(telemetry.rays.beam.samples.length);
   });
 
   it("returns non-aligned telemetry when the exit bearing misses the target", () => {
@@ -316,6 +320,22 @@ describe("getSimulationTelemetry", () => {
 
     expect(telemetry.alignment.state).toBe("converging");
     expect(telemetry.isAligned).toBe(false);
+  });
+});
+
+describe("beam sampling helpers", () => {
+  it("keeps sample counts odd and within rendering bounds", () => {
+    expect(getBeamSampleCount(2)).toBeGreaterThanOrEqual(7);
+    expect(getBeamSampleCount(180)).toBeLessThanOrEqual(17);
+    expect(getBeamSampleCount(60) % 2).toBe(1);
+  });
+
+  it("returns symmetric offsets that include both beam edges and the center", () => {
+    const offsets = getBeamSampleOffsets(60);
+
+    expect(offsets[0]).toBeCloseTo(-30);
+    expect(offsets.at(-1)).toBeCloseTo(30);
+    expect(offsets[Math.floor(offsets.length / 2)]).toBeCloseTo(0);
   });
 });
 
