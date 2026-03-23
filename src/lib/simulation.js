@@ -29,6 +29,7 @@ const ALIGNMENT_GUIDE_PATTERNS = [
 const ALIGNMENT_PALETTES = {
   locked: {
     stroke: "#16a34a",
+    main: "#16a34a",
     glow: "rgba(22,163,74,0.18)",
     edge: "#86efac",
     fill: "rgba(22,163,74,0.14)",
@@ -40,6 +41,7 @@ const ALIGNMENT_PALETTES = {
   },
   converging: {
     stroke: "#0891b2",
+    main: "#0891b2",
     glow: "rgba(8,145,178,0.18)",
     edge: "#67e8f9",
     fill: "rgba(8,145,178,0.12)",
@@ -51,6 +53,7 @@ const ALIGNMENT_PALETTES = {
   },
   fringe: {
     stroke: "#d97706",
+    main: "#d97706",
     glow: "rgba(217,119,6,0.18)",
     edge: "#fdba74",
     fill: "rgba(217,119,6,0.11)",
@@ -62,6 +65,7 @@ const ALIGNMENT_PALETTES = {
   },
   default: {
     stroke: "#2563eb",
+    main: "#2563eb",
     glow: "rgba(37,99,235,0.16)",
     edge: "#93c5fd",
     fill: "rgba(37,99,235,0.08)",
@@ -442,7 +446,7 @@ export function traceRay({
   let reflectionsUsed = 0;
   let exitedVia = null;
   let didExit = false;
-  const points = [{ x, y }];
+  const points = [{ x, y, wall: null }];
 
   for (let step = 0; step < 48; step += 1) {
     const hits = [
@@ -455,17 +459,17 @@ export function traceRay({
     const hit = hits.length ? hits.reduce((best, candidate) => (candidate.t < best.t ? candidate : best)) : null;
 
     if (!hit) {
-      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits });
+      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true });
       didExit = true;
       break;
     }
 
     x += dx * hit.t;
     y += dy * hit.t;
-    points.push({ x, y });
+    points.push({ x, y, wall: hit.wall });
 
     if (surfaces[hit.wall] === "pass" || reflectionsUsed >= maxReflections) {
-      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits });
+      points.push({ x: x + dx * escapeDistanceUnits, y: y + dy * escapeDistanceUnits, wall: null, isExit: true });
       exitedVia = hit.wall;
       didExit = true;
       break;
@@ -492,5 +496,45 @@ export function traceRay({
     exitedVia,
     reflectionsUsed,
     didExit,
+  };
+}
+
+const ABSORPTION_PER_BOUNCE = 0.2;
+
+export function buildBeamSegments(leftRay, rightRay) {
+  const segments = [];
+  const maxPairs = Math.min(leftRay.points.length - 1, rightRay.points.length - 1);
+
+  for (let i = 0; i < maxPairs; i++) {
+    const leftFrom = leftRay.points[i];
+    const leftTo = leftRay.points[i + 1];
+    const rightFrom = rightRay.points[i];
+    const rightTo = rightRay.points[i + 1];
+
+    // After the first segment, check if both rays hit the same wall.
+    // If they diverge, stop pairing — the cone concept breaks down.
+    if (i > 0 && leftTo.wall && rightTo.wall && leftTo.wall !== rightTo.wall) {
+      break;
+    }
+
+    const isExterior = !!(leftTo.isExit || rightTo.isExit);
+
+    segments.push({
+      index: i,
+      leftStart: leftFrom,
+      leftEnd: leftTo,
+      rightStart: rightFrom,
+      rightEnd: rightTo,
+      attenuation: Math.pow(1 - ABSORPTION_PER_BOUNCE, i),
+      isExterior,
+    });
+
+    if (isExterior) break;
+  }
+
+  return {
+    segments,
+    leftTail: leftRay.points.slice(segments.length),
+    rightTail: rightRay.points.slice(segments.length),
   };
 }
