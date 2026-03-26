@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Crosshair, MapPinned, Upload, X } from "lucide-react";
 
+import {
+  getGeolocationErrorMessage,
+  getGeolocationSupportState,
+  getPendingGeolocationMessage,
+} from "../lib/geolocation";
 import { extractNodeLogs, getGeoMetrics, normalizeGeoLocation } from "../lib/simulation";
 import { Button, InfoCard, NumberField } from "./ui";
 
@@ -28,20 +33,34 @@ function StepIndicator({ current }) {
 function StepLocation({ userLocation, onLocationSet }) {
   const [fields, setFields] = useState({ latitude: "", longitude: "" });
   const [status, setStatus] = useState("Use GPS or enter coordinates manually.");
+  const pendingGpsHintRef = useRef(null);
+
+  const clearPendingGpsHint = () => {
+    if (pendingGpsHintRef.current !== null) {
+      window.clearTimeout(pendingGpsHintRef.current);
+      pendingGpsHintRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearPendingGpsHint(), []);
 
   const requestGps = () => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setStatus(
-        !window.isSecureContext
-          ? "Location requires HTTPS. Please access this page over HTTPS or localhost."
-          : "Geolocation is not available in this browser.",
-      );
+    const supportState = getGeolocationSupportState();
+    if (!supportState.available) {
+      setStatus(supportState.message);
       return;
     }
 
+    clearPendingGpsHint();
     setStatus("Requesting your current location…");
+    pendingGpsHintRef.current = window.setTimeout(() => {
+      setStatus(getPendingGeolocationMessage());
+      pendingGpsHintRef.current = null;
+    }, 1500);
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        clearPendingGpsHint();
         const normalized = normalizeGeoLocation({
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
@@ -60,13 +79,8 @@ function StepLocation({ userLocation, onLocationSet }) {
         setStatus(`GPS location set (±${Math.round(normalized.accuracy ?? 0)} m).`);
       },
       (error) => {
-        const hints = {
-          [error.PERMISSION_DENIED]:
-            "Location permission denied. On iOS, check Settings → Safari → Location, and ensure the site is allowed.",
-          [error.POSITION_UNAVAILABLE]: "Location unavailable. Try again outdoors or with Wi-Fi enabled.",
-          [error.TIMEOUT]: "Location request timed out. Please try again.",
-        };
-        setStatus(hints[error.code] || `Location request failed: ${error.message}`);
+        clearPendingGpsHint();
+        setStatus(getGeolocationErrorMessage(error));
       },
       { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 },
     );
