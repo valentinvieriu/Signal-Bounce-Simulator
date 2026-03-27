@@ -11,6 +11,7 @@ import {
   getSimulationTelemetry,
   norm360,
 } from "./lib/simulation";
+import { fetchNearbyBuildings, inferSimulationFromBuildings } from "./lib/buildingInference";
 
 function useDeviceHeading(enabled, onHeadingChange) {
   const [heading, setHeading] = useState(null);
@@ -95,6 +96,7 @@ export default function App() {
   const [sim, setSim] = useState(createDefaultSimulationState);
   const [useCompass, setUseCompass] = useState(false);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
+  const [buildingInference, setBuildingInference] = useState({ status: "idle", message: null, details: null });
   const gyroMode = sim.gyroMode ?? "north";
   const controlledKey = gyroMode === "antenna" ? "antennaDirection" : "forwardBearing";
 
@@ -119,6 +121,48 @@ export default function App() {
     setSim((current) => ({ ...current, targetBearing, distanceKm }));
     setImportWizardOpen(false);
   }, []);
+
+  const handleInferFromNearbyBuildings = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setBuildingInference({ status: "error", message: "Geolocation is unavailable in this browser.", details: null });
+      return;
+    }
+
+    setBuildingInference({ status: "loading", message: "Locating and loading nearby building footprints…", details: null });
+
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          maximumAge: 15000,
+          timeout: 12000,
+        });
+      });
+
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+      const buildings = await fetchNearbyBuildings({ latitude, longitude });
+      const inferred = inferSimulationFromBuildings({ latitude, longitude, buildings, currentSim: sim });
+
+      if (!inferred) {
+        setBuildingInference({ status: "error", message: "No nearby building geometry was available to infer a layout.", details: null });
+        return;
+      }
+
+      setSim(inferred.inferredSim);
+      setBuildingInference({
+        status: "success",
+        message: `Loaded ${inferred.metadata.sampledBuildings} nearby buildings and inferred a ${inferred.inferredSim.widthUnits.toFixed(1)}m × ${inferred.inferredSim.depthUnits.toFixed(1)}m shell.`,
+        details: inferred.metadata,
+      });
+    } catch (error) {
+      setBuildingInference({
+        status: "error",
+        message: error?.message ?? "Failed to infer building geometry from nearby map data.",
+        details: null,
+      });
+    }
+  }, [sim]);
 
   return (
     <div className="min-h-screen bg-[#ececec] font-sans text-zinc-950">
@@ -148,6 +192,8 @@ export default function App() {
             useCompass={useCompass}
             telemetry={telemetry}
             gyroMode={gyroMode}
+            buildingInference={buildingInference}
+            onInferFromNearbyBuildings={handleInferFromNearbyBuildings}
           />
         </div>
       </div>

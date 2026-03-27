@@ -21,6 +21,7 @@ src/
   index.css                  # Tailwind import
   lib/
     simulation.js            # Ray tracer, scoring, alignment, findBestBearing, geo utilities
+    buildingInference.js     # Nearby building footprint fetch + shell inference
   components/
     Compass.jsx              # Compass view with alignment feedback
     MapView.jsx              # Courtyard map view with beam visualization
@@ -55,6 +56,10 @@ index.html                   # HTML shell
 - `findBestBearing(sim)` sweeps 0-359° and picks the bearing with strongest combined score across all exit opportunities
 - `getSimulationTelemetry` uses the same scoring for real-time alignment feedback
 - Compass supports device orientation API on mobile (iOS `webkitCompassHeading`)
+
+### Building geometry inference
+- `buildingInference.js` can query nearby `building=*` footprints from Overpass and infer rectangular shell dimensions
+- Map UI exposes “Infer shell from nearby 3D buildings” to update width/depth/material defaults without manual drawing
 
 ## Maintenance
 

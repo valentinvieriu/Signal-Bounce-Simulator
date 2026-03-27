@@ -10,7 +10,7 @@ export function Badge({ children, className = "" }) {
   );
 }
 
-export function Button({ children, onClick, variant = "default", className = "" }) {
+export function Button({ children, onClick, variant = "default", className = "", disabled = false }) {
   const variantClassName =
     variant === "default"
       ? "bg-zinc-900 text-zinc-50 hover:bg-zinc-900/90"
@@ -20,7 +20,8 @@ export function Button({ children, onClick, variant = "default", className = "" 
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 items-center justify-center rounded-2xl px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-zinc-950 ${variantClassName} ${className}`}
+      disabled={disabled}
+      className={`inline-flex h-10 items-center justify-center rounded-2xl px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 ${variantClassName} ${className}`}
     >
       {children}
     </button>
