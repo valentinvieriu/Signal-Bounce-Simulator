@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Move, Waves } from "lucide-react";
+import { Building2, LoaderCircle, Move, Waves } from "lucide-react";
 
 import {
   MAP_TIPS,
@@ -65,7 +65,7 @@ function getMainBouncePoints(result) {
 
 const MotionCircle = motion.circle;
 
-export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode }) {
+export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMode, buildingInference, onInferFromNearbyBuildings }) {
   const { widthUnits, depthUnits, beamSpread, antennaGainDbi = 0, wallBounces, forwardBearing, targetBearing, antennaDirection, antenna, surfaces } = sim;
   const viewWidth = 700;
   const viewDepth = 500;
@@ -529,7 +529,38 @@ export default function MapView({ sim, updateSim, useCompass, telemetry, gyroMod
           <div className="md:col-span-2 flex flex-wrap gap-2 pt-2">
             <Button onClick={() => { updateSim("resetMap"); setBestBearingResult(undefined); }}>Reset map defaults</Button>
             <Button onClick={handleFindBestBearing}>Find best bearing</Button>
+            <Button onClick={onInferFromNearbyBuildings} disabled={buildingInference?.status === "loading"} variant="secondary">
+              {buildingInference?.status === "loading" ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Inferring from nearby buildings…
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <Building2 className="h-4 w-4" />
+                  Infer shell from nearby 3D buildings
+                </span>
+              )}
+            </Button>
           </div>
+          {buildingInference?.message && (
+            <div className={`md:col-span-2 rounded-2xl border p-4 text-sm ${
+              buildingInference.status === "success"
+                ? "border-cyan-200 bg-cyan-50 text-cyan-900"
+                : buildingInference.status === "loading"
+                  ? "border-zinc-200 bg-zinc-100 text-zinc-700"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+            >
+              <p className="font-medium">{buildingInference.message}</p>
+              {buildingInference.details && (
+                <p className="mt-1">
+                  Source: {buildingInference.details.source} · Building {buildingInference.details.buildingId}
+                  {buildingInference.details.centroidDistanceMeters !== null ? ` · centroid ${buildingInference.details.centroidDistanceMeters}m away` : ""}
+                </p>
+              )}
+            </div>
+          )}
           {bestBearingResult && (
             <div className="md:col-span-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
               <p className="font-semibold">Best antenna bearing: {bestBearingResult.antennaBearing}°</p>
