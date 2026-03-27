@@ -29,9 +29,47 @@ function StepLocation({ userLocation, onLocationSet }) {
   const [fields, setFields] = useState({ latitude: "", longitude: "" });
   const [status, setStatus] = useState("Use GPS or enter coordinates manually.");
 
-  const requestGps = () => {
+  const buildGeoErrorMessage = (error) => {
+    if (error?.code === 1) {
+      return "Location permission was denied. On iPhone Safari go to Settings → Privacy & Security → Location Services → Safari Websites, choose While Using the App and enable Precise Location, then reload this page.";
+    }
+    if (error?.code === 2) {
+      return "Location is currently unavailable. Move to an open area and try again.";
+    }
+    if (error?.code === 3) {
+      return "Location request timed out. Try again or enter coordinates manually.";
+    }
+
+    return `Location request failed: ${error?.message ?? "Unknown geolocation error."}`;
+  };
+
+  const checkPermissionState = async () => {
+    if (typeof navigator === "undefined" || !navigator.permissions?.query) {
+      return null;
+    }
+
+    try {
+      const permission = await navigator.permissions.query({ name: "geolocation" });
+      return permission.state;
+    } catch {
+      return null;
+    }
+  };
+
+  const requestGps = async () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       setStatus("Geolocation is not available in this browser.");
+      return;
+    }
+
+    if (!window.isSecureContext) {
+      setStatus("Geolocation requires HTTPS. Reload this page using a secure URL.");
+      return;
+    }
+
+    const permissionState = await checkPermissionState();
+    if (permissionState === "denied") {
+      setStatus("Location access is blocked for this site on this device. Enable it in Safari settings, then reload the page and try again.");
       return;
     }
 
@@ -56,9 +94,9 @@ function StepLocation({ userLocation, onLocationSet }) {
         setStatus(`GPS location set (±${Math.round(normalized.accuracy ?? 0)} m).`);
       },
       (error) => {
-        setStatus(`Location request failed: ${error.message}`);
+        setStatus(buildGeoErrorMessage(error));
       },
-      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
     );
   };
 
